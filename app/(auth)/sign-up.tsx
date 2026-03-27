@@ -4,11 +4,14 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     TextInput,
+    View,
 } from 'react-native';
 
 import { SsoButtons } from '@/components/sso-buttons';
@@ -94,39 +97,44 @@ export default function SignUpScreen() {
   if (pendingVerification) {
     return (
       <ThemedView style={styles.container}>
+        <View style={styles.logoHeader}>
+          <Image source={require('@/assets/images/splash-icon.png')} style={styles.logo} resizeMode="contain" />
+        </View>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.inner}
+          style={styles.formWrapper}
         >
-          <ThemedText type="title" style={styles.heading}>
-            Check your email
-          </ThemedText>
-          <ThemedText type="body" style={[styles.subheading, { color: colors.textMuted }]}>
-            We sent a verification code to {email}
-          </ThemedText>
+          <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
+            <ThemedText type="title" style={styles.heading}>
+              Check your email
+            </ThemedText>
+            <ThemedText type="body" style={[styles.subheading, { color: colors.textMuted }]}>
+              We sent a verification code to {email}
+            </ThemedText>
 
-          <TextInput
-            style={inputStyle}
-            placeholder="Verification code"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="number-pad"
-            value={code}
-            onChangeText={setCode}
-          />
+            <TextInput
+              style={inputStyle}
+              placeholder="Verification code"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="number-pad"
+              value={code}
+              onChangeText={setCode}
+            />
 
-          <Pressable
-            style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
-            onPress={handleVerify}
-            disabled={loading || !code}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <ThemedText type="bodySemiBold" style={styles.buttonText}>
-                Verify Email
-              </ThemedText>
-            )}
-          </Pressable>
+            <Pressable
+              style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
+              onPress={handleVerify}
+              disabled={loading || !code}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <ThemedText type="bodySemiBold" style={styles.buttonText}>
+                  Verify Email
+                </ThemedText>
+              )}
+            </Pressable>
+          </ScrollView>
         </KeyboardAvoidingView>
       </ThemedView>
     );
@@ -134,10 +142,14 @@ export default function SignUpScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <View style={styles.logoHeader}>
+        <Image source={require('@/assets/images/splash-icon.png')} style={styles.logo} resizeMode="contain" />
+      </View>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inner}
+        style={styles.formWrapper}
       >
+        <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
         <ThemedText type="title" style={styles.heading}>
           Create account
         </ThemedText>
@@ -201,6 +213,7 @@ export default function SignUpScreen() {
             </ThemedText>
           </Pressable>
         </Link>
+        </ScrollView>
       </KeyboardAvoidingView>
     </ThemedView>
   );
@@ -210,10 +223,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  inner: {
-    flex: 1,
+  logoHeader: {
+    backgroundColor: '#122518',
+    paddingVertical: Spacing.xxl,
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  logo: {
+    width: 220,
+    height: 56,
+  },
+  formWrapper: {
+    flex: 1,
+  },
+  inner: {
     padding: Spacing.lg,
+    paddingTop: Spacing.xl,
   },
   heading: {
     marginBottom: Spacing.sm,

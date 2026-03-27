@@ -4,11 +4,14 @@ import { useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     Pressable,
+    ScrollView,
     StyleSheet,
     TextInput,
+    View,
 } from 'react-native';
 
 import { SsoButtons } from '@/components/sso-buttons';
@@ -98,45 +101,50 @@ export default function SignInScreen() {
   if (pendingSecondFactor) {
     return (
       <ThemedView style={styles.container}>
+        <View style={styles.logoHeader}>
+          <Image source={require('@/assets/images/splash-icon.png')} style={styles.logo} resizeMode="contain" />
+        </View>
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.inner}
+          style={styles.formWrapper}
         >
-          <ThemedText type="title" style={styles.heading}>
-            Check your email
-          </ThemedText>
-          <ThemedText type="body" style={[styles.subheading, { color: colors.textMuted }]}>
-            We sent a verification code to {email}
-          </ThemedText>
-
-          <TextInput
-            style={inputStyle}
-            placeholder="Verification code"
-            placeholderTextColor={colors.textMuted}
-            keyboardType="number-pad"
-            value={code}
-            onChangeText={setCode}
-          />
-
-          <Pressable
-            style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
-            onPress={handleVerifyCode}
-            disabled={loading || !code}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <ThemedText type="bodySemiBold" style={styles.buttonText}>
-                Verify &amp; Sign In
-              </ThemedText>
-            )}
-          </Pressable>
-
-          <Pressable style={styles.linkRow} onPress={() => { setPendingSecondFactor(false); setCode(''); }}>
-            <ThemedText type="bodyMed" style={{ color: colors.primary }}>
-              Back to sign in
+          <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
+            <ThemedText type="title" style={styles.heading}>
+              Check your email
             </ThemedText>
-          </Pressable>
+            <ThemedText type="body" style={[styles.subheading, { color: colors.textMuted }]}>
+              We sent a verification code to {email}
+            </ThemedText>
+
+            <TextInput
+              style={inputStyle}
+              placeholder="Verification code"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="number-pad"
+              value={code}
+              onChangeText={setCode}
+            />
+
+            <Pressable
+              style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
+              onPress={handleVerifyCode}
+              disabled={loading || !code}
+            >
+              {loading ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <ThemedText type="bodySemiBold" style={styles.buttonText}>
+                  Verify &amp; Sign In
+                </ThemedText>
+              )}
+            </Pressable>
+
+            <Pressable style={styles.linkRow} onPress={() => { setPendingSecondFactor(false); setCode(''); }}>
+              <ThemedText type="bodyMed" style={{ color: colors.primary }}>
+                Back to sign in
+              </ThemedText>
+            </Pressable>
+          </ScrollView>
         </KeyboardAvoidingView>
       </ThemedView>
     );
@@ -144,10 +152,14 @@ export default function SignInScreen() {
 
   return (
     <ThemedView style={styles.container}>
+      <View style={styles.logoHeader}>
+        <Image source={require('@/assets/images/splash-icon.png')} style={styles.logo} resizeMode="contain" />
+      </View>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.inner}
+        style={styles.formWrapper}
       >
+        <ScrollView contentContainerStyle={styles.inner} keyboardShouldPersistTaps="handled">
         <ThemedText type="title" style={styles.heading}>
           Welcome back
         </ThemedText>
@@ -202,6 +214,7 @@ export default function SignInScreen() {
             </ThemedText>
           </Pressable>
         </Link>
+        </ScrollView>
       </KeyboardAvoidingView>
     </ThemedView>
   );
@@ -211,10 +224,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  inner: {
-    flex: 1,
+  logoHeader: {
+    backgroundColor: '#122518',
+    paddingVertical: Spacing.xxl,
+    alignItems: 'center',
     justifyContent: 'center',
+  },
+  logo: {
+    width: 220,
+    height: 56,
+  },
+  formWrapper: {
+    flex: 1,
+  },
+  inner: {
     padding: Spacing.lg,
+    paddingTop: Spacing.xl,
   },
   heading: {
     marginBottom: Spacing.sm,
