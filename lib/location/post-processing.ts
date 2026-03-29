@@ -1,0 +1,124 @@
+import { randomUUID } from 'expo-crypto';
+
+import { createSyncJob } from '../db/sync-jobs';
+import { getPointsForWalk, markPointsClean } from '../db/track-points';
+import { getWalk, updateWalkStats, type WalkStats } from '../db/walks';
+import { haversineMetres } from './haversine';
+import { filterCleanPointIds } from './point-filter';
+
+const ELEVATION_SMOOTH_WINDOW = 5;
+const MIN_ALTITUDE_COVERAGE = 0.5; // 50% of clean points must have altitude
+
+/**
+ * Runs the 8-step post-processing pipeline on a completed walk.
+ * Writes the resulting stats back to SQLite and creates a sync job.
+ */
+export async function runPostProcessing(walkId: string): Promise<void> {
+  const walk = getWalk(walkId);
+  if (!walk) return;
+
+  // Step 1 – Load raw points
+  const rawPoints = getPointsForWalk(walkId);
+
+  // Step 2 – Filter clean points
+  const cleanIds = new Set(filterCleanPointIds(rawPoints));
+  const clean = rawPoints.filter((p) => cleanIds.has(p.id));
+  markPointsClean([...cleanIds]);
+
+  if (clean.length === 0) {
+    const emptyStats: WalkStats = {
+      distanceMetres: 0,
+      durationSeconds: walk.endedAt
+        ? Math.round((walk.endedAt - walk.startedAt) / 1000)
+        : 0,
+      movingTimeSeconds: 0,
+      stoppedTimeSeconds: 0,
+      pointCount: 0,
+    };
+    updateWalkStats(walkId, emptyStats);
+    createSyncJob({
+      id: randomUUID(),
+      walkId,
+      deviceId: walk.deviceId,
+    });
+    return;
+  }
+
+  // Step 3 – Distance (Haversine over clean segment)
+  let distanceMetres = 0;
+  for (let i = 1; i < clean.length; i++) {
+    distanceMetres += haversineMetres(
+      clean[i - 1]!.latitude,
+      clean[i - 1]!.longitude,
+      clean[i]!.latitude,
+      clean[i]!.longitude,
+    );
+  }
+
+  // Step 4 – Time breakdown
+  const durationSeconds = walk.endedAt
+    ? Math.round((walk.endedAt - walk.startedAt) / 1000)
+    : 0;
+
+  // Moving time: sum of inter-point gaps ≤ 60 s (stopped = stationary)
+  let movingTimeSeconds = 0;
+  for (let i = 1; i < clean.length; i++) {
+    const gapSec = (clean[i]!.timestamp - clean[i - 1]!.timestamp) / 1000;
+    if (gapSec <= 60) movingTimeSeconds += gapSec;
+  }
+  const stoppedTimeSeconds = Math.max(0, durationSeconds - movingTimeSeconds);
+
+  // Step 5 – Pace
+  const avgPaceSecsPerKm =
+    distanceMetres >= 100 && movingTimeSeconds > 0
+      ? movingTimeSeconds / (distanceMetres / 1000)
+      : undefined;
+
+  // Step 6 – Elevation (optional, smoothed)
+  let elevationGainMetres: number | undefined;
+  let elevationLossMetres: number | undefined;
+
+  const pointsWithAlt = clean.filter((p) => p.altitudeMetres !== null);
+  if (pointsWithAlt.length / clean.length >= MIN_ALTITUDE_COVERAGE) {
+    // Smooth altitudes with a sliding window average
+    const alts = clean.map((p) => p.altitudeMetres ?? null);
+    const smoothed: number[] = [];
+    for (let i = 0; i < alts.length; i++) {
+      const half = Math.floor(ELEVATION_SMOOTH_WINDOW / 2);
+      const slice = alts.slice(
+        Math.max(0, i - half),
+        Math.min(alts.length, i + half + 1),
+      );
+      const valid = slice.filter((v): v is number => v !== null);
+      if (valid.length > 0) {
+        smoothed.push(valid.reduce((a, b) => a + b, 0) / valid.length);
+      }
+    }
+
+    let gain = 0;
+    let loss = 0;
+    for (let i = 1; i < smoothed.length; i++) {
+      const delta = smoothed[i]! - smoothed[i - 1]!;
+      if (delta > 0) gain += delta;
+      else loss += Math.abs(delta);
+    }
+    elevationGainMetres = Math.round(gain);
+    elevationLossMetres = Math.round(loss);
+  }
+
+  // Step 7 – Save stats
+  const stats: WalkStats = {
+    distanceMetres: Math.round(distanceMetres),
+    durationSeconds,
+    movingTimeSeconds: Math.round(movingTimeSeconds),
+    stoppedTimeSeconds: Math.round(stoppedTimeSeconds),
+    pointCount: clean.length,
+    ...(avgPaceSecsPerKm !== undefined ? { avgPaceSecsPerKm } : {}),
+    ...(elevationGainMetres !== undefined ? { elevationGainMetres } : {}),
+    ...(elevationLossMetres !== undefined ? { elevationLossMetres } : {}),
+  };
+  updateWalkStats(walkId, stats);
+
+  // Step 8 – Create sync job
+  createSyncJob({ id: randomUUID(), walkId, deviceId: walk.deviceId });
+}

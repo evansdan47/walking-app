@@ -566,33 +566,60 @@ Post-walk summary inert card. Shows title, date, all stats in a `StatGrid`, and 
 
 ## 10. Screen: Recording (`app/(tabs)/record.tsx`)
 
-The recording screen has three visual states, driven by `useWalkSession()`:
+> **Architecture change:** The recording screen uses a **map-first layout**. A
+> `MapboxGL.MapView` fills 100 % of the screen and all UI is delivered as a
+> `@gorhom/bottom-sheet` overlay. The session state is read from
+> `useWalkSessionContext()` (a global context provider) rather than calling
+> `useWalkSession()` directly. This requires Phases 8 and 9 to be completed before
+> the screen is migrated from the current flat layout.
+
+### Layout
+
+```
+┌─────────────────────────────────────────┐
+│  MapboxGL.MapView  (100 % screen)       │
+│  – live position dot                    │
+│  – growing breadcrumb polyline          │
+│                            [PhotoButton]│  ← FAB, visable when recording/paused
+├─────────────────────────────────────────┤
+│  BottomSheet (snaps over map)           │
+│                                         │
+│  ── Collapsed snap point (~120 dp) ──   │
+│    ElapsedTimer (lg)  •  StatusBadge    │
+│                                         │
+│  ── Expanded snap point ──              │
+│    RecordingStatusBadge                 │
+│    ElapsedTimer (lg, headline)          │
+│    StatGrid (2 col):                    │
+│      DistanceDisplay | PaceDisplay      │
+│      AltitudeDisplay | Accuracy         │
+│    RecordingControls                    │
+└─────────────────────────────────────────┘
+```
+
+### Visual States (driven by `useWalkSessionContext()`)
 
 ### State A — Ready (idle, permissions granted)
-- App name / logo header
-- Empty stat placeholders (greyed `StatCard`s)  
+- Map shows user's current or last-known position
+- Bottom sheet at collapsed height
 - `RecordingStatusBadge status="idle"`
-- `RecordingControls phase="idle"`
+- `RecordingControls phase="idle"` (Start button only in collapsed sheet)
+- No `PhotoButton`
 
 ### State B — Active (recording or paused)
-- `RecordingStatusBadge` at top (pulsing green or amber)
-- `ElapsedTimer` (large, headline card — `size="lg"`)
-- `StatGrid` (2 columns):
-  - `DistanceDisplay`
-  - `PaceDisplay`
-  - `AltitudeDisplay`
-  - current accuracy indicator (small, for transparency)
-- `RecordingControls phase="recording"|"paused"` pinned to bottom
-- `PhotoButton` floating above controls
+- Map shows live position + growing breadcrumb polyline
+- Bottom sheet initially collapsed; user drags up to see full stats
+- `RecordingStatusBadge` pulsing green (`recording`) or amber (`paused`)
+- `ElapsedTimer` ticking in both snap points
+- Full `StatGrid` + `RecordingControls` visible in expanded snap point
+- `PhotoButton` FAB floats above the bottom sheet
 
 ### State C — Completing
-- Brief "Calculating your walk..." overlay with an activity indicator
-- Fires post-processing then navigates to summary
+- Brief "Calculating your walk…" modal overlay with activity indicator
+- Fires post-processing then navigates to `walk-review`
 
 ### State D — Permission required
-- `PermissionGate` fills the screen, controls disabled
-
-**No map is rendered on this screen.** The recording screen has zero dependency on any map SDK.
+- `PermissionGate` modal rendered over the map; bottom sheet hidden until granted
 
 ---
 
@@ -611,14 +638,18 @@ Reached automatically after `stop()` completes post-processing. Accessible later
 
 ```
 app/
-  _layout.tsx              ← import background-task.ts here
-  walk-summary.tsx         ← post-walk summary screen
+  _layout.tsx              ← import background-task.ts; wrap Stack in WalkSessionProvider
+  walk-summary.tsx         ← post-walk summary screen (replaced by walk-review.tsx in Stage 2)
   (tabs)/
-    record.tsx             ← recording screen
+    _layout.tsx            ← render RecordingIndicatorBar above tab bar when recording
+    record.tsx             ← recording screen (map-first + bottom sheet after Phase 9)
 
 components/
+  map/                     ← NEW — shared map components used in both recording and review
+    live-position-layer.tsx  ← current position dot + breadcrumb polyline
   shared/
     permission-gate.tsx
+    recording-indicator-bar.tsx  ← NEW — persistent thin bar shown while recording
     stat-card.tsx
     stat-grid.tsx
     walk-summary-card.tsx
@@ -631,10 +662,13 @@ components/
     recording-controls.tsx
     recording-status-badge.tsx
 
+contexts/                  ← NEW
+  walk-session-context.tsx ← WalkSessionProvider + useWalkSessionContext
+
 hooks/
   use-location-permission.ts
   use-location-task.ts
-  use-walk-session.ts
+  use-walk-session.ts      ← internal logic; context wraps this
   use-sync-trigger.ts
 
 lib/
@@ -666,51 +700,145 @@ convex/
 ## 13. Sequenced Work Items
 
 ### Phase 1 – Foundation (no UI)
-- [ ] Install dependencies
-- [ ] Update `app.json` with permissions and plugins
-- [ ] Create `lib/db/client.ts` — open SQLite, run migrations
-- [ ] Create all four SQLite table definitions
-- [ ] Create `lib/db/` CRUD modules for all tables
-- [ ] Write `lib/location/haversine.ts` utility
+- [x] Install dependencies
+- [x] Update `app.json` with permissions and plugins
+- [x] Create `lib/db/client.ts` — open SQLite, run migrations
+- [x] Create all four SQLite table definitions
+- [x] Create `lib/db/` CRUD modules for all tables
+- [x] Write `lib/location/haversine.ts` utility
 - [ ] Run development build (`npx expo run:ios` / `npx expo run:android`) — required for background location testing
 
 ### Phase 2 – Location Layer
-- [ ] Create `lib/location/background-task.ts` — define the task
-- [ ] Import `background-task.ts` in `app/_layout.tsx`
-- [ ] Create `hooks/use-location-permission.ts`
-- [ ] Create `hooks/use-location-task.ts` (start/stop wrapper)
+- [x] Create `lib/location/background-task.ts` — define the task
+- [x] Import `background-task.ts` in `app/_layout.tsx`
+- [x] Create `hooks/use-location-permission.ts`
+- [x] Create `hooks/use-location-task.ts` (start/stop wrapper)
 
 ### Phase 3 – Session State Machine
-- [ ] Create `hooks/use-walk-session.ts` (start/pause/resume/stop)
-- [ ] Create `lib/location/point-filter.ts`
-- [ ] Create `lib/location/post-processing.ts`
+- [x] Create `hooks/use-walk-session.ts` (start/pause/resume/stop)
+- [x] Create `lib/location/point-filter.ts`
+- [x] Create `lib/location/post-processing.ts`
 
 ### Phase 4 – Shared Components
-- [ ] `StatCard`
-- [ ] `StatGrid`
-- [ ] `PermissionGate`
+- [x] `StatCard`
+- [x] `StatGrid`
+- [x] `PermissionGate`
 
 ### Phase 5 – Recording Components
-- [ ] `RecordingStatusBadge` (with pulse animation)
-- [ ] `ElapsedTimer`
-- [ ] `DistanceDisplay`
-- [ ] `PaceDisplay`
-- [ ] `AltitudeDisplay`
-- [ ] `RecordingControls`
-- [ ] `PhotoButton`
+- [x] `RecordingStatusBadge` (with pulse animation)
+- [x] `ElapsedTimer`
+- [x] `DistanceDisplay`
+- [x] `PaceDisplay`
+- [x] `AltitudeDisplay`
+- [x] `RecordingControls`
+- [x] `PhotoButton`
 
 ### Phase 6 – Screens
-- [ ] `app/(tabs)/record.tsx`
-- [ ] `WalkSummaryCard`
-- [ ] `app/walk-summary.tsx`
+- [x] `app/(tabs)/record.tsx`
+- [x] `WalkSummaryCard`
+- [x] `app/walk-summary.tsx`
 
 ### Phase 7 – Sync Pipeline
-- [ ] Convex mutations (`convex/walks.ts`, `convex/track-points.ts`, `convex/walk-photos.ts`)
-- [ ] `lib/sync/upload-walk.ts`
-- [ ] `lib/sync/sync-manager.ts`
-- [ ] `hooks/use-sync-trigger.ts`
+- [x] Convex mutations (`convex/walks.ts`, `convex/track_points.ts`, `convex/walk_photos.ts`)
+- [x] `lib/sync/upload-walk.ts`
+- [x] `lib/sync/sync-manager.ts`
+- [x] `hooks/use-sync-trigger.ts`
 
-### Phase 8 – Integration & Device Testing
+### Phase 8 – Global Walk Session Context
+
+The session state must survive tab navigation, so it cannot live inside the record
+screen alone. This phase lifts it into a React context.
+
+- [x] Create `contexts/walk-session-context.tsx`:
+  - Export `WalkSessionProvider` (wraps children with the context)
+  - Export `useWalkSessionContext()` hook — throws if called outside the provider
+  - Internally calls the existing `useWalkSession()` logic (or inlines it)
+- [x] Wrap the root `<Stack>` in `app/_layout.tsx` with `<WalkSessionProvider>`
+- [x] Update `app/(tabs)/record.tsx` to call `useWalkSessionContext()` instead of
+  `useWalkSession()` directly
+- [x] Run `npx tsc --noEmit` — 0 errors
+
+**Checkpoint:** Session phase survives navigating between tabs. Idle → recording →
+navigate to explore tab → back to record → still shows recording state.
+
+---
+
+### Phase 9 – Map-First Record Screen + Bottom Sheet
+
+- [x] Install `@gorhom/bottom-sheet`:
+  ```bash
+  npx expo install @gorhom/bottom-sheet react-native-reanimated react-native-gesture-handler
+  ```
+  (reanimated and gesture-handler may already be present — check before installing)
+- [x] Wrap the root navigator with `<GestureHandlerRootView>` and
+  `<BottomSheetModalProvider>` in `app/_layout.tsx`
+- [x] Install `@rnmapbox/maps` and run `npx expo prebuild --clean` if not already done
+  (see review roadmap Phase 1)
+- [x] Create `components/map/live-position-layer.tsx` — `MapboxGL.UserLocation` dot
+  + `ShapeSource`/`LineLayer` for the breadcrumb polyline (receives current points as
+  prop)
+- [x] Rewrite `app/(tabs)/record.tsx` layout:
+  - `MapboxGL.MapView` fills the screen (`StyleSheet.absoluteFill`)
+  - `LivePositionLayer` rendered inside the map
+  - `BottomSheet` with two snap points: `['15%', '65%']`
+    - Collapsed: `ElapsedTimer` + `RecordingStatusBadge` in a single row
+    - Expanded: full stats grid + `RecordingControls`
+  - `PhotoButton` FAB positioned above the bottom sheet, visible only when
+    `phase === 'recording' || phase === 'paused'`
+  - `PermissionGate` rendered as a centred modal card over the map (not full-screen)
+- [x] Run `npx tsc --noEmit` — 0 errors
+
+**Checkpoint:** Recording screen shows a live map. Bottom sheet collapses to show
+elapsed time; drags up to reveal stats and controls. PhotoButton is visible during
+recording.
+
+---
+
+### Phase 10 – Global Recording Indicator
+
+A persistent thin bar above the tab bar that signals an active or paused recording
+from any tab.
+
+- [x] Create `components/shared/recording-indicator-bar.tsx`:
+  - Reads `phase` from `useWalkSessionContext()`
+  - Rendered only when `phase === 'recording' || phase === 'paused'`
+  - Layout: full-width bar, ~40 dp tall, primary colour background
+  - Contains: pulsing grey dot (reanimated `withRepeat`) + `ElapsedTimer` (compact)
+    + "Recording" label
+  - Tapping calls `router.push('/(tabs)')` (navigates to record tab)
+- [x] Add `<RecordingIndicatorBar />` to `app/(tabs)/_layout.tsx`, rendered as
+  `tabBar` slot content above the default tab bar
+- [x] Run `npx tsc --noEmit` — 0 errors
+
+**Checkpoint:** Navigate to the Explore tab while recording. The indicator bar is
+visible above the tab bar showing a ticking elapsed time. Tapping it returns to the
+Record tab.
+
+---
+
+### Phase 11 – Cross-Tab Guard (load walk while recording)
+
+Prevent the user silently overwriting an active recording by opening a saved walk.
+
+- [x] In any screen that triggers walk loading (history list tap, review screen
+  direct load), read `phase` from `useWalkSessionContext()`
+- [x] If `phase === 'recording' || phase === 'paused'`, show:
+  ```ts
+  Alert.alert(
+    'Recording in progress',
+    'Stop recording before opening a saved walk.',
+    [{ text: 'OK' }],
+  );
+  ```
+  and do not navigate
+- [x] Run `npx tsc --noEmit` — 0 errors
+
+**Checkpoint:** Tapping a history card while recording shows the alert and does not
+navigate to the review screen.
+
+---
+
+### Phase 12 – Integration & Device Testing
 - [ ] End-to-end test: start → background lock phone → walk 5+ minutes → stop → verify point count in SQLite
 - [ ] Test sync: disable WiFi, record walk, re-enable, confirm Convex receives data
 - [ ] Test force-quit: confirm SQLite data is intact, walk can be viewed in library from local data

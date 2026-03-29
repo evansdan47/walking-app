@@ -80,6 +80,8 @@ export const Colors = {
     tint:            Palette.ochre[700],
     tabIconDefault:  Palette.slate[600],
     tabIconSelected: Palette.ochre[700],
+    success:         '#2e7d32',
+    successMuted:    '#e8f5e9',
   },
   dark: {
     // Text
@@ -103,6 +105,8 @@ export const Colors = {
     tint:            Palette.ochre[600],
     tabIconDefault:  Palette.slate[400],
     tabIconSelected: Palette.ochre[600],
+    success:         '#4caf50',
+    successMuted:    '#1a3a1f',
   },
 } as const;
 

@@ -1,22 +1,43 @@
 import { ClerkProvider } from '@clerk/expo';
 import {
-  Inter_400Regular,
-  Inter_500Medium,
-  Inter_700Bold,
-  useFonts,
+    Inter_400Regular,
+    Inter_500Medium,
+    Inter_700Bold,
+    useFonts,
 } from '@expo-google-fonts/inter';
 import {
-  PlusJakartaSans_700Bold,
-  PlusJakartaSans_800ExtraBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import Mapbox from '@rnmapbox/maps';
 import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
 import { Stack } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { LogBox } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
+// @clerk/expo uses NativeEventEmitter with a native module that doesn't implement the
+// addListener/removeListeners contract required in React Native 0.65+. These are
+// harmless dev-mode warnings from within the Clerk library; suppress them until
+// the package is updated.
+LogBox.ignoreLogs([
+  '`new NativeEventEmitter()` was called with a non-null argument without the required `addListener` method.',
+  '`new NativeEventEmitter()` was called with a non-null argument without the required `removeListeners` method.',
+]);
+
+// Must be imported at the root so the background task is registered
+// before the OS tries to resume it after a force-quit restart.
+import '@/lib/location/background-task';
+
+// Initialise Mapbox with the public access token once at app startup.
+// The token is exposed to the JS bundle via the EXPO_PUBLIC_ prefix.
+Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
+
+import { WalkSessionProvider } from '@/contexts/walk-session-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useConvexAuth } from '@/hooks/use-convex-auth';
 
@@ -60,19 +81,25 @@ export default function RootLayout() {
   }
 
   return (
-    <ClerkProvider
-      publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!}
-      tokenCache={tokenCache}
-    >
-      <ConvexProviderWithAuth client={convex} useAuth={useConvexAuth}>
-        <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-          <Stack>
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-          </Stack>
-          <StatusBar style="auto" />
-        </ThemeProvider>
-      </ConvexProviderWithAuth>
-    </ClerkProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ClerkProvider
+        publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!}
+        tokenCache={tokenCache}
+      >
+        <ConvexProviderWithAuth client={convex} useAuth={useConvexAuth}>
+          <WalkSessionProvider>
+            <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+              <Stack>
+                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                <Stack.Screen name="walk-summary" options={{ headerShown: false }} />
+                <Stack.Screen name="walk-review" options={{ headerShown: false }} />
+              </Stack>
+              <StatusBar style="auto" />
+            </ThemeProvider>
+          </WalkSessionProvider>
+        </ConvexProviderWithAuth>
+      </ClerkProvider>
+    </GestureHandlerRootView>
   );
 }

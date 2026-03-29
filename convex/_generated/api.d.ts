@@ -8,7 +8,10 @@
  * @module
  */
 
+import type * as track_points from "../track_points.js";
 import type * as users from "../users.js";
+import type * as walk_photos from "../walk_photos.js";
+import type * as walks from "../walks.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +20,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  track_points: typeof track_points;
   users: typeof users;
+  walk_photos: typeof walk_photos;
+  walks: typeof walks;
 }>;
 
 /**
