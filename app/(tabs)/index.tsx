@@ -1,5 +1,5 @@
 import { useAuth, useUser } from '@clerk/expo';
-import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import BottomSheet, { BottomSheetFlatList, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useMutation } from 'convex/react';
 import Constants from 'expo-constants';
 import { randomUUID } from 'expo-crypto';
@@ -7,13 +7,14 @@ import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Pressable,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    ActivityIndicator,
+    Alert,
+    Pressable,
+    StyleSheet,
+    Switch,
+    Text,
+    TouchableOpacity,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -25,20 +26,26 @@ import { PaceDisplay } from '@/components/recording/pace-display';
 import { PhotoFab } from '@/components/recording/photo-button';
 import { RecordingControls } from '@/components/recording/recording-controls';
 import { RecordingStatusBadge } from '@/components/recording/recording-status-badge';
+import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
+import { HistoryWalkCard } from '@/components/review/history-walk-card';
+import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { RecordingIndicatorBar } from '@/components/shared/recording-indicator-bar';
 import { StatCard } from '@/components/shared/stat-card';
 import { StatGrid } from '@/components/shared/stat-grid';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { useReviewRoute } from '@/contexts/review-route-context';
 import { useWalkSessionContext } from '@/contexts/walk-session-context';
 import { api } from '@/convex/_generated/api';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useFeatureFlags } from '@/hooks/use-feature-flags';
 import { useLocationPermission } from '@/hooks/use-location-permission';
 import { sheetEvents } from '@/lib/ui/sheet-events';
 import MapboxGL from '@rnmapbox/maps';
 
 import { getPointsForWalk, insertPoint } from '@/lib/db/track-points';
+import { listCompletedWalks, type Walk } from '@/lib/db/walks';
 import { haversineMetres } from '@/lib/location/haversine';
 
 function useLiveStats(walkId: string | null) {
@@ -274,37 +281,72 @@ function RecordSheetContent({
   );
 }
 
-function LibrarySheetContent({
+function HistorySheetContent({
   colors,
   insets,
+  onClose,
+  allowDuringRecording,
 }: {
   colors: ColorPalette;
   insets: ReturnType<typeof useSafeAreaInsets>;
+  onClose: () => void;
+  allowDuringRecording: boolean;
 }) {
+  const router = useRouter();
+  const { state } = useWalkSessionContext();
+  const [walks, setWalks] = useState<Walk[]>([]);
+
+  // Load walks on mount (component only mounts while the sheet is open)
+  useEffect(() => {
+    setWalks(listCompletedWalks());
+  }, []);
+
+  const handleWalkPress = (walkId: string) => {
+    if (!allowDuringRecording && (state.phase === 'recording' || state.phase === 'paused')) {
+      Alert.alert('Recording in progress', 'Stop your current walk before opening a saved walk.', [{ text: 'OK' }]);
+      return;
+    }
+    onClose();
+    router.push({ pathname: '/walk-review', params: { walkId } });
+  };
+
+  const walkCount = walks.length;
+  const walkLabel = `${walkCount} ${walkCount === 1 ? 'walk' : 'walks'}`;
+
   return (
-    <BottomSheetScrollView
+    <BottomSheetFlatList
+      data={walks}
+      keyExtractor={(w: Walk) => w.id}
       contentContainerStyle={[
         sheetStyles.content,
         { paddingBottom: insets.bottom + Spacing.base },
       ]}
-    >
-      <Text style={[sheetStyles.sheetTitle, { color: colors.text }]}>My Walks</Text>
-      <Text style={[sheetStyles.sheetBody, { color: colors.textMuted }]}>
-        Your recorded walks will appear here.
-      </Text>
-      <Text style={[sheetStyles.sheetCaption, { color: colors.textMuted }]}>
-        Coming in Stage 2
-      </Text>
-    </BottomSheetScrollView>
+      ListHeaderComponent={
+        <View style={sheetStyles.historyHeader}>
+          <Text style={[sheetStyles.historyCount, { color: colors.textMuted }]}>{walkLabel}</Text>
+          <TouchableOpacity onPress={() => router.push('/(tabs)/library')}>
+            <Text style={[sheetStyles.viewOnMap, { color: colors.primary }]}>View on map</Text>
+          </TouchableOpacity>
+        </View>
+      }
+      ListEmptyComponent={<EmptyWalkHistory />}
+      renderItem={({ item }: { item: Walk }) => (
+        <HistoryWalkCard walk={item} onPress={() => handleWalkPress(item.id)} />
+      )}
+    />
   );
 }
 
 function ProfileSheetContent({
   colors,
   insets,
+  allowHistoryDuringRecording,
+  onToggleAllowHistoryDuringRecording,
 }: {
   colors: ColorPalette;
   insets: ReturnType<typeof useSafeAreaInsets>;
+  allowHistoryDuringRecording: boolean;
+  onToggleAllowHistoryDuringRecording: (value: boolean) => void;
 }) {
   const { signOut } = useAuth();
   const { user } = useUser();
@@ -348,7 +390,22 @@ function ProfileSheetContent({
       {email ? (
         <Text style={[sheetStyles.profileEmail, { color: colors.textMuted }]}>{email}</Text>
       ) : null}
-      <View style={{ flex: 1 }} />
+
+      {/* Feature flags */}
+      <View style={[sheetStyles.flagsSection, { borderColor: colors.border }]}>
+        <Text style={[sheetStyles.flagsTitle, { color: colors.textMuted }]}>Developer Settings</Text>
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>History during recording</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Allow viewing walk history while a walk is being recorded</Text>
+          </View>
+          <Switch
+            value={allowHistoryDuringRecording}
+            onValueChange={onToggleAllowHistoryDuringRecording}
+            trackColor={{ false: colors.border, true: colors.primary }}
+          />
+        </View>
+      </View>
       <Pressable
         style={[sheetStyles.signOutButton, { borderColor: colors.border }]}
         onPress={handleSignOut}
@@ -379,7 +436,7 @@ function TabBar({
 }) {
   const tabs: { id: SheetTab; icon: string; label: string }[] = [
     { id: 'record', icon: 'figure.walk', label: 'Record' },
-    { id: 'library', icon: 'list.bullet', label: 'Library' },
+    { id: 'library', icon: 'list.bullet', label: 'History' },
     { id: 'profile', icon: 'person.circle', label: 'Profile' },
   ];
 
@@ -428,6 +485,8 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const perms = useLocationPermission();
   const { state, pausedDurationMs, start, pause, resume, stop, reset } = useWalkSessionContext();
+  const { isReviewActive, reviewRoute, reviewPhotos, onPhotoTap } = useReviewRoute();
+  const { flags, setFlag } = useFeatureFlags();
 
   const activeWalkId =
     state.phase === 'recording' || state.phase === 'paused' ? state.walkId : null;
@@ -491,7 +550,7 @@ export default function MapScreen() {
   // Record active: multiple latches for peeking vs full stats
   // Library / Profile: single point each
   const snapPoints = useMemo(() => {
-    if (activeSheet === 'library') return ['45%'];
+    if (activeSheet === 'library') return ['92%'];
     if (activeSheet === 'profile') return ['60%'];
     if (activeSheet === 'record' && isActive) return ['23%', '33%', '43%', '58%'];
     return ['58%']; // record idle, or closed default
@@ -503,6 +562,15 @@ export default function MapScreen() {
   useEffect(() => {
     sheetRef.current?.close();
   }, []);
+
+  // Close the sheet as soon as the walk starts completing so the review screen
+  // is fully visible when it navigates in.
+  useEffect(() => {
+    if (state.phase === 'completing' || state.phase === 'completed') {
+      sheetRef.current?.close();
+      setActiveSheet(null);
+    }
+  }, [state.phase]);
 
   const prevIsActive = useRef(false);
   useEffect(() => {
@@ -523,10 +591,6 @@ export default function MapScreen() {
   }, [isActive]);
 
   const handleTabPress = (tab: SheetTab) => {
-    if (tab === 'library') {
-      router.push('/(tabs)/library');
-      return;
-    }
     const idx = tab === 'record' && isActive ? 3 : 0;
     console.log('[TabPress]', {
       tab,
@@ -567,23 +631,34 @@ export default function MapScreen() {
         attributionEnabled={false}
         compassEnabled={false}
       >
-        <MapboxGL.Camera
-          followUserLocation={state.phase === 'recording'}
-          followZoomLevel={15}
-          {...(state.phase !== 'recording'
-            ? {
-                centerCoordinate: currentLocation
-                  ? [currentLocation.longitude, currentLocation.latitude]
-                  : [-0.1276, 51.5074],
-                zoomLevel: currentLocation ? 15 : 10,
-                animationMode: 'none' as const,
-              }
-            : {})}
-        />
+        {/* Camera: yielded to ReviewRouteLayer when a walk review is open */}
+        {!isReviewActive && (
+          <MapboxGL.Camera
+            followUserLocation={state.phase === 'recording'}
+            followZoomLevel={15}
+            {...(state.phase !== 'recording'
+              ? {
+                  centerCoordinate: currentLocation
+                    ? [currentLocation.longitude, currentLocation.latitude]
+                    : [-0.1276, 51.5074],
+                  zoomLevel: currentLocation ? 15 : 10,
+                  animationMode: 'none' as const,
+                }
+              : {})}
+          />
+        )}
         <LivePositionLayer
-          coordinates={coordinates}
+          coordinates={isReviewActive ? [] : coordinates}
           showUserLocation={perms.foreground === 'granted'}
         />
+        {/* Review route — shown while walk-review transparentModal is open on top */}
+        {isReviewActive && (
+          <ReviewRouteLayer
+            points={reviewRoute}
+            photos={reviewPhotos}
+            {...(onPhotoTap ? { onPhotoTap } : {})}
+          />
+        )}
       </MapboxGL.MapView>
 
       {/* Recording status badge — top-centre map overlay */}
@@ -662,8 +737,22 @@ export default function MapScreen() {
             reset={reset}
           />
         )}
-        {activeSheet === 'library' && <LibrarySheetContent colors={colors} insets={insets} />}
-        {activeSheet === 'profile' && <ProfileSheetContent colors={colors} insets={insets} />}
+        {activeSheet === 'library' && (
+          <HistorySheetContent
+            colors={colors}
+            insets={insets}
+            onClose={() => { sheetRef.current?.close(); setActiveSheet(null); }}
+            allowDuringRecording={flags.allowHistoryDuringRecording}
+          />
+        )}
+        {activeSheet === 'profile' && (
+          <ProfileSheetContent
+            colors={colors}
+            insets={insets}
+            allowHistoryDuringRecording={flags.allowHistoryDuringRecording}
+            onToggleAllowHistoryDuringRecording={(v) => setFlag('allowHistoryDuringRecording', v)}
+          />
+        )}
       </BottomSheet>
 
       {/* Custom tab bar — rendered last so it sits on top of the sheet handle */}
@@ -729,6 +818,37 @@ const sheetStyles = StyleSheet.create({
   sheetTitle: { fontFamily: Typography.fontBold, fontSize: Typography.sizes.lg },
   sheetBody: { fontFamily: Typography.fontRegular, fontSize: Typography.sizes.base },
   sheetCaption: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.sm, opacity: 0.5 },
+  historyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.sm,
+  },
+  historyCount: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.sm },
+  viewOnMap: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.sm },
+  flagsSection: {
+    width: '100%',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 10,
+    padding: Spacing.base,
+    marginTop: Spacing.base,
+    gap: Spacing.sm,
+  },
+  flagsTitle: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: Spacing.xs,
+  },
+  flagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.base,
+  },
+  flagLabel: { flex: 1, gap: 2 },
+  flagName: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.sm },
+  flagDesc: { fontFamily: Typography.fontRegular, fontSize: Typography.sizes.xs },
   profileContent: { alignItems: 'center', flexGrow: 1 },
   avatar: {
     width: 80,

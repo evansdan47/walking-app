@@ -37,6 +37,7 @@ import '@/lib/location/background-task';
 // The token is exposed to the JS bundle via the EXPO_PUBLIC_ prefix.
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
+import { ReviewRouteProvider } from '@/contexts/review-route-context';
 import { WalkSessionProvider } from '@/contexts/walk-session-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useConvexAuth } from '@/hooks/use-convex-auth';
@@ -88,15 +89,24 @@ export default function RootLayout() {
       >
         <ConvexProviderWithAuth client={convex} useAuth={useConvexAuth}>
           <WalkSessionProvider>
-            <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-              <Stack>
-                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-                <Stack.Screen name="walk-summary" options={{ headerShown: false }} />
-                <Stack.Screen name="walk-review" options={{ headerShown: false }} />
-              </Stack>
-              <StatusBar style="auto" />
-            </ThemeProvider>
+            <ReviewRouteProvider>
+              <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                <Stack>
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                  <Stack.Screen name="walk-summary" options={{ headerShown: false }} />
+                  <Stack.Screen
+                    name="walk-review"
+                    options={{
+                      headerShown: false,
+                      presentation: 'transparentModal',
+                      animation: 'fade',
+                    }}
+                  />
+                </Stack>
+                <StatusBar style="auto" />
+              </ThemeProvider>
+            </ReviewRouteProvider>
           </WalkSessionProvider>
         </ConvexProviderWithAuth>
       </ClerkProvider>

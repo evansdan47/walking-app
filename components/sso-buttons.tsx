@@ -1,6 +1,5 @@
 import { useSSO } from '@clerk/expo';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { Alert, Platform, Pressable, StyleSheet, View } from 'react-native';
 
@@ -45,7 +44,6 @@ const PROVIDERS: SsoProvider[] = [
 
 export function SsoButtons() {
   const { startSSOFlow } = useSSO();
-  const router = useRouter();
   const colorScheme = useColorScheme();
   const scheme = colorScheme === 'dark' ? 'dark' : 'light';
   const colors = Colors[scheme];
@@ -55,7 +53,10 @@ export function SsoButtons() {
       const { createdSessionId, setActive } = await startSSOFlow({ strategy });
       if (createdSessionId && setActive) {
         await setActive({ session: createdSessionId });
-        router.replace('/(tabs)');
+        // Do not navigate imperatively — Clerk's isSignedIn state propagating
+        // will cause TabLayout's guard to redirect to /(tabs) automatically.
+        // An immediate router.replace races against Clerk's state update on
+        // Android and causes a bounce back to the sign-in screen.
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Please try again.';

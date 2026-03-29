@@ -1,35 +1,22 @@
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/shared/app-header';
-import MapboxGL from '@rnmapbox/maps';
 
 import { PhotoViewerModal } from '@/components/review/photo-viewer-modal';
-import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { WalkActionBar } from '@/components/review/walk-action-bar';
 import { WalkHeaderCard } from '@/components/review/walk-header-card';
 import { WalkStatSummary } from '@/components/review/walk-stat-summary';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useReviewRoute } from '@/contexts/review-route-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import { getPhotosForWalk } from '@/lib/db/walk-photos';
 import { deleteWalk, getWalk } from '@/lib/db/walks';
 import { buildRoute } from '@/lib/review/build-route';
-
-function formatDistance(metres: number): string {
-  const km = metres / 1000;
-  return km >= 1 ? `${km.toFixed(1)} km` : `${metres.toFixed(0)} m`;
-}
-
-function formatDuration(totalSeconds: number): string {
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
 
 export default function WalkReviewScreen() {
   const { walkId } = useLocalSearchParams<{ walkId: string }>();
@@ -47,7 +34,13 @@ export default function WalkReviewScreen() {
   const [title, setTitle] = useState<string | null>(walk?.title ?? null);
   const [selectedPhoto, setSelectedPhoto] = useState<WalkPhoto | null>(null);
 
-  // Walk not found — navigation guard
+  // Push route data into the shared map context so the underlying screen can
+  // render ReviewRouteLayer without needing its own MapboxGL.MapView.
+  const { setReviewData, clearReviewData } = useReviewRoute();
+  useEffect(() => {
+    if (route.length > 0) setReviewData(route, photos, setSelectedPhoto);
+    return () => clearReviewData();
+  }, [route, photos, setReviewData, clearReviewData, setSelectedPhoto]);
   if (!walk) {
     return (
       <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
@@ -80,20 +73,9 @@ export default function WalkReviewScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Full-screen map */}
-      <MapboxGL.MapView
-        style={StyleSheet.absoluteFill}
-        styleURL={MapboxGL.StyleURL.Outdoors}
-        logoEnabled
-        attributionEnabled
-        compassEnabled={false}
-      >
-        <ReviewRouteLayer
-          points={route}
-          photos={photos}
-          onPhotoTap={setSelectedPhoto}
-        />
-      </MapboxGL.MapView>
+      {/* No MapboxGL.MapView here — the route is rendered via ReviewRouteContext
+          onto whichever screen's map is currently mounted underneath this
+          transparentModal overlay (recording screen or library screen). */}
 
       {/* Photo viewer — renders over everything */}
       <PhotoViewerModal
@@ -109,11 +91,11 @@ export default function WalkReviewScreen() {
         />
       </View>
 
-      {/* Bottom sheet */}
+      {/* Bottom sheet — index 0 = handle-only (collapsed), index 1 = 50% latched */}
       <BottomSheet
         ref={sheetRef}
-        snapPoints={['25%', '70%']}
-        index={0}
+        snapPoints={['12%', '50%']}
+        index={1}
         enableDynamicSizing={false}
         enablePanDownToClose={false}
         backgroundStyle={{ backgroundColor: colors.backgroundCard }}
@@ -125,25 +107,7 @@ export default function WalkReviewScreen() {
             { paddingBottom: insets.bottom + Spacing.base },
           ]}
         >
-          {/* Peek row — always visible at 25% snap */}
-          <View style={styles.peekRow}>
-            <Text
-              style={[styles.peekTitle, { color: colors.text }]}
-              numberOfLines={1}
-            >
-              {displayTitle}
-            </Text>
-            {stats && (
-              <Text style={[styles.peekMeta, { color: colors.textMuted }]}>
-                {formatDistance(stats.distanceMetres)} · {formatDuration(stats.durationSeconds)}
-              </Text>
-            )}
-          </View>
-
-          {/* Divider */}
-          <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-          {/* Full detail — visible when expanded to 70% */}
+          {/* Full detail */}
           <WalkHeaderCard
             walkId={walk.id}
             title={title}
@@ -157,6 +121,15 @@ export default function WalkReviewScreen() {
           {stats && <WalkStatSummary stats={stats} />}
 
           <WalkActionBar onDelete={handleDelete} />
+
+          {/* Close sheet button */}
+          <TouchableOpacity
+            style={[styles.closeButton, { borderColor: colors.border }]}
+            onPress={() => router.back()}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.closeButtonText, { color: colors.textMuted }]}>Close Review</Text>
+          </TouchableOpacity>
         </BottomSheetScrollView>
       </BottomSheet>
     </View>
@@ -164,7 +137,7 @@ export default function WalkReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: 'transparent' },
   headerOverlay: {
     position: 'absolute',
     top: 0,
@@ -177,20 +150,17 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.sm,
     gap: Spacing.md,
   },
-  peekRow: {
-    gap: Spacing.xs,
+  closeButton: {
+    height: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.sm,
   },
-  peekTitle: {
-    fontFamily: Typography.fontBold,
-    fontSize: Typography.sizes.base,
-  },
-  peekMeta: {
+  closeButtonText: {
     fontFamily: Typography.fontMedium,
-    fontSize: Typography.sizes.sm,
-  },
-  divider: {
-    height: StyleSheet.hairlineWidth,
-    marginVertical: Spacing.xs,
+    fontSize: Typography.sizes.base,
   },
   errorContainer: {
     flex: 1,
