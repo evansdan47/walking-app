@@ -7,6 +7,24 @@ echo ============================================================
 echo.
 
 set ROOT=%~dp0
+set PROPS=%ROOT%android\gradle.properties
+
+:: ── 0. Auto-increment version ───────────────────────────────
+for /f "tokens=2 delims==" %%a in ('findstr /i "^VERSION_CODE=" "%PROPS%"') do set OLD_CODE=%%a
+set /a NEW_CODE=%OLD_CODE%+1
+powershell -NoProfile -Command "(Get-Content '%PROPS%') -replace '^VERSION_CODE=%OLD_CODE%$', 'VERSION_CODE=%NEW_CODE%' | Set-Content '%PROPS%'"
+
+for /f "tokens=2 delims==" %%a in ('findstr /i "^VERSION_NAME=" "%PROPS%"') do set OLD_NAME=%%a
+for /f "tokens=1,2,3 delims=." %%a in ("%OLD_NAME%") do (
+    set MAJOR=%%a
+    set MINOR=%%b
+    set /a PATCH=%%c+1
+)
+set NEW_NAME=%MAJOR%.%MINOR%.%PATCH%
+powershell -NoProfile -Command "(Get-Content '%PROPS%') -replace '^VERSION_NAME=%OLD_NAME%$', 'VERSION_NAME=%NEW_NAME%' | Set-Content '%PROPS%'"
+
+echo Version: %OLD_NAME% ^> %NEW_NAME%  ^(build %OLD_CODE% ^> %NEW_CODE%^)
+echo.
 
 :: ── 1. Check keystore.properties exists ─────────────────────
 if not exist "%ROOT%android\app\keystore.properties" (
