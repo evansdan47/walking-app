@@ -1,6 +1,6 @@
 import * as SQLite from 'expo-sqlite';
 
-const db = SQLite.openDatabaseSync('wayfinder.db');
+const db = SQLite.openDatabaseSync('rambleio.db');
 
 db.execSync(`
   PRAGMA journal_mode=WAL;

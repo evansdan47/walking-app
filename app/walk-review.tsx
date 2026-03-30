@@ -1,7 +1,8 @@
+import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AppHeader } from '@/components/shared/app-header';
@@ -15,7 +16,7 @@ import { useReviewRoute } from '@/contexts/review-route-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import { getPhotosForWalk } from '@/lib/db/walk-photos';
-import { deleteWalk, getWalk } from '@/lib/db/walks';
+import { deleteWalk, getWalk, updateWalkTitle } from '@/lib/db/walks';
 import { buildRoute } from '@/lib/review/build-route';
 
 export default function WalkReviewScreen() {
@@ -33,6 +34,8 @@ export default function WalkReviewScreen() {
 
   const [title, setTitle] = useState<string | null>(walk?.title ?? null);
   const [selectedPhoto, setSelectedPhoto] = useState<WalkPhoto | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draft, setDraft] = useState<string>('');
 
   // Push route data into the shared map context so the underlying screen can
   // render ReviewRouteLayer without needing its own MapboxGL.MapView.
@@ -71,6 +74,24 @@ export default function WalkReviewScreen() {
     router.replace('/(tabs)');
   };
 
+  const handleStartEditTitle = () => {
+    setDraft(displayTitle);
+    setEditingTitle(true);
+  };
+
+  const handleConfirmTitle = () => {
+    const trimmed = draft.trim();
+    if (trimmed) {
+      updateWalkTitle(walk.id, trimmed);
+      setTitle(trimmed);
+    }
+    setEditingTitle(false);
+  };
+
+  const handleCancelTitle = () => {
+    setEditingTitle(false);
+  };
+
   return (
     <View style={styles.container}>
       {/* No MapboxGL.MapView here — the route is rendered via ReviewRouteContext
@@ -87,7 +108,31 @@ export default function WalkReviewScreen() {
       <View style={styles.headerOverlay} pointerEvents="box-none">
         <AppHeader
           title={displayTitle}
-          onBack={() => router.back()}
+          onBack={editingTitle ? handleCancelTitle : () => router.back()}
+          centerContent={
+            editingTitle ? (
+              <TextInput
+                style={[styles.titleInput, { color: colors.text, borderColor: colors.border }]}
+                value={draft}
+                onChangeText={setDraft}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleConfirmTitle}
+                selectTextOnFocus
+              />
+            ) : undefined
+          }
+          rightAction={
+            editingTitle ? (
+              <Pressable onPress={handleConfirmTitle} hitSlop={8} style={styles.headerAction}>
+                <Ionicons name="checkmark" size={22} color={colors.success} />
+              </Pressable>
+            ) : (
+              <Pressable onPress={handleStartEditTitle} hitSlop={8} style={styles.headerAction}>
+                <Ionicons name="pencil-outline" size={20} color={colors.textMuted} />
+              </Pressable>
+            )
+          }
         />
       </View>
 
@@ -109,11 +154,8 @@ export default function WalkReviewScreen() {
         >
           {/* Full detail */}
           <WalkHeaderCard
-            walkId={walk.id}
             title={title}
             startedAt={walk.startedAt}
-            durationSeconds={stats?.durationSeconds ?? 0}
-            onTitleChanged={setTitle}
           />
 
           {/* Elevation chart placeholder — Phase 4 */}
@@ -175,5 +217,17 @@ const styles = StyleSheet.create({
   errorBack: {
     fontFamily: Typography.fontMedium,
     fontSize: Typography.sizes.base,
+  },
+  titleInput: {
+    flex: 1,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: Spacing.sm,
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.base,
+  },
+  headerAction: {
+    padding: Spacing.xs,
   },
 });

@@ -18,13 +18,13 @@ const COPY: Record<
   foreground: {
     icon: '📍',
     title: 'Location access needed',
-    body: 'Wayfinder needs access to your location to record your walk route.',
+    body: 'Rambleio needs access to your location to record your walk route.',
     cta: 'Allow location access',
   },
   background: {
     icon: '🔒',
     title: 'Background location needed',
-    body: 'To keep recording while your screen is off or you switch apps, Wayfinder needs "Always" location permission.',
+    body: 'To keep recording while your screen is off or you switch apps, Rambleio needs "Always" location permission.',
     cta: 'Allow background access',
   },
 };

@@ -1,6 +1,6 @@
 @echo off
 echo ============================================================
-echo  Launching Wayfinder on connected Android emulator/device
+echo  Launching Rambleio on connected Android emulator/device
 echo ============================================================
 echo.
 echo Connected devices:
@@ -20,7 +20,7 @@ if not defined DEVICE (
 )
 
 echo Launching on: %DEVICE%
-adb -s %DEVICE% shell am start -n com.wayfinder.app/.MainActivity
+adb -s %DEVICE% shell am start -n com.rambleio.app/.MainActivity
 echo.
 echo App launched. Metro must already be running (run metro-start.bat if not).
 pause

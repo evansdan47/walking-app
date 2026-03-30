@@ -13,9 +13,11 @@ interface AppHeaderProps {
   title: string;
   onBack?: () => void;
   rightAction?: ReactNode;
+  /** Replaces the centre title text with a custom node (e.g. a TextInput). */
+  centerContent?: ReactNode;
 }
 
-export function AppHeader({ title, onBack, rightAction }: AppHeaderProps) {
+export function AppHeader({ title, onBack, rightAction, centerContent }: AppHeaderProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -43,10 +45,12 @@ export function AppHeader({ title, onBack, rightAction }: AppHeaderProps) {
           ) : null}
         </View>
 
-        {/* Centre title */}
-        <ThemedText type="subtitle" style={styles.title} numberOfLines={1}>
-          {title}
-        </ThemedText>
+        {/* Centre title or custom content */}
+        {centerContent ?? (
+          <ThemedText type="subtitle" style={styles.title} numberOfLines={1}>
+            {title}
+          </ThemedText>
+        )}
 
         {/* Right slot */}
         <View style={styles.side}>{rightAction ?? null}</View>

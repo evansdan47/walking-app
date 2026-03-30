@@ -1,5 +1,5 @@
 /**
- * Design tokens for Wayfinder — Tactical Editorial design system.
+ * Design tokens for Rambleio — Tactical Editorial design system.
  * All colours, typography, spacing, radius and shadow values live here.
  * Nothing else in the codebase should use hardcoded values.
  *
