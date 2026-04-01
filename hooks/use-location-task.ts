@@ -15,26 +15,36 @@ const TRACKING_OPTIONS: Location.LocationTaskOptions = {
   },
 };
 
+// Module-level mutex: prevents start/stop calls from overlapping if the user
+// taps rapidly or if the recovery effect races with a manual start.
+let trackingLock: Promise<void> = Promise.resolve();
+
 export function useLocationTask() {
   async function startTracking() {
-    const isRunning = await Location.hasStartedLocationUpdatesAsync(
-      BACKGROUND_LOCATION_TASK,
-    );
-    if (!isRunning) {
-      await Location.startLocationUpdatesAsync(
+    trackingLock = trackingLock.then(async () => {
+      const isRunning = await Location.hasStartedLocationUpdatesAsync(
         BACKGROUND_LOCATION_TASK,
-        TRACKING_OPTIONS,
       );
-    }
+      if (!isRunning) {
+        await Location.startLocationUpdatesAsync(
+          BACKGROUND_LOCATION_TASK,
+          TRACKING_OPTIONS,
+        );
+      }
+    });
+    return trackingLock;
   }
 
   async function stopTracking() {
-    const isRunning = await Location.hasStartedLocationUpdatesAsync(
-      BACKGROUND_LOCATION_TASK,
-    );
-    if (isRunning) {
-      await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
-    }
+    trackingLock = trackingLock.then(async () => {
+      const isRunning = await Location.hasStartedLocationUpdatesAsync(
+        BACKGROUND_LOCATION_TASK,
+      );
+      if (isRunning) {
+        await Location.stopLocationUpdatesAsync(BACKGROUND_LOCATION_TASK);
+      }
+    });
+    return trackingLock;
   }
 
   return { startTracking, stopTracking };

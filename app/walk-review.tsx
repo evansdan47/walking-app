@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useMemo, useRef, useState } from 'react';
-import { Dimensions, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Dimensions, Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import MapboxGL from '@rnmapbox/maps';
@@ -15,16 +15,22 @@ import { WalkStatSummary } from '@/components/review/walk-stat-summary';
 import { AppHeader } from '@/components/shared/app-header';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRouteColours } from '@/hooks/use-route-colours';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import { getPhotosForWalk } from '@/lib/db/walk-photos';
 import { deleteWalk, getWalk, updateWalkTitle } from '@/lib/db/walks';
 import { buildRoute } from '@/lib/review/build-route';
+import {
+  ROUTE_DISPLAY_MODES,
+  type RouteDisplayMode,
+} from '@/lib/review/route-display-modes';
 
 export default function WalkReviewScreen() {
   const { walkId } = useLocalSearchParams<{ walkId: string }>();
   const router = useRouter();
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
+  const { colours } = useRouteColours();
   const insets = useSafeAreaInsets();
   const sheetRef = useRef<BottomSheet>(null);
 
@@ -45,6 +51,8 @@ export default function WalkReviewScreen() {
   const [selectedPhoto, setSelectedPhoto] = useState<WalkPhoto | null>(null);
   const [editingTitle, setEditingTitle] = useState(false);
   const [draft, setDraft] = useState<string>('');
+  const [displayMode, setDisplayMode] = useState<RouteDisplayMode>('route');
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   if (!walk) {
     return (
@@ -108,6 +116,8 @@ export default function WalkReviewScreen() {
           points={route}
           photos={photos}
           onPhotoTap={setSelectedPhoto}
+          mode={displayMode}
+          colours={colours}
         />
       </MapboxGL.MapView>
 
@@ -116,6 +126,77 @@ export default function WalkReviewScreen() {
         photo={selectedPhoto}
         onClose={() => setSelectedPhoto(null)}
       />
+
+      {/* Route mode picker button — top-right, below the app header.
+          Long-press (or tap) to open the mode picker. */}
+      {route.length >= 2 && (
+        <TouchableOpacity
+          style={[
+            styles.modeButton,
+            { top: insets.top + 60, backgroundColor: colors.backgroundCard, borderColor: colors.border },
+          ]}
+          onPress={() => setPickerOpen((v) => !v)}
+          onLongPress={() => setPickerOpen(true)}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="layers-outline" size={22} color={colors.textMuted} />
+        </TouchableOpacity>
+      )}
+
+      {/* Mode picker modal */}
+      <Modal
+        visible={pickerOpen}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setPickerOpen(false)}
+      >
+        {/* Full-screen backdrop — tap to dismiss */}
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => setPickerOpen(false)}
+        />
+        {/* Picker card — sibling of backdrop so tapping it doesn’t bubble to dismiss */}
+        <View
+          style={[
+            styles.pickerCard,
+            {
+              top: insets.top + 60 + 44 + Spacing.sm,
+              right: Spacing.base,
+              backgroundColor: colors.backgroundCard,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          {ROUTE_DISPLAY_MODES.map((m, idx) => (
+            <Pressable
+              key={m.id}
+              style={[
+                styles.pickerOption,
+                idx > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+                displayMode === m.id && { backgroundColor: colors.primary + '18' },
+              ]}
+              onPress={() => { setDisplayMode(m.id); setPickerOpen(false); }}
+            >
+              {/* Colour swatches */}
+              <View style={styles.swatchRow}>
+                {m.swatchColors.map((c) => (
+                  <View key={c} style={[styles.swatchDot, { backgroundColor: c }]} />
+                ))}
+              </View>
+              {/* Text */}
+              <View style={styles.pickerTextBlock}>
+                <Text style={[styles.pickerLabel, { color: colors.text }]}>{m.label}</Text>
+                <Text style={[styles.pickerDesc, { color: colors.textMuted }]}>{m.description}</Text>
+              </View>
+              {/* Active tick */}
+              {displayMode === m.id && (
+                <Ionicons name="checkmark" size={18} color={colors.primary} />
+              )}
+            </Pressable>
+          ))}
+        </View>
+      </Modal>
 
       {/* App header — absolute overlay at top */}
       <View style={styles.headerOverlay} pointerEvents="box-none">
@@ -244,5 +325,62 @@ const styles = StyleSheet.create({
   },
   headerAction: {
     padding: Spacing.xs,
+  },
+  modeButton: {
+    position: 'absolute',
+    right: Spacing.base,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  pickerCard: {
+    position: 'absolute',
+    right: Spacing.base,
+    width: 290,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  pickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  swatchRow: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  swatchDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  pickerTextBlock: {
+    flex: 1,
+    gap: 2,
+  },
+  pickerLabel: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.sm,
+  },
+  pickerDesc: {
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.xs,
+    lineHeight: 16,
   },
 });

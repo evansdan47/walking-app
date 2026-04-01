@@ -514,12 +514,22 @@ export default function MapScreen() {
 
   // Follow-location toggle: when on, the camera re-centres on every position update.
   const [followLocation, setFollowLocation] = useState(true);
+  const followLocationRef = useRef(true);
+  followLocationRef.current = followLocation;
   const cameraRef = useRef<MapboxGL.Camera>(null);
 
   // Sheet state
   const [activeSheet, setActiveSheet] = useState<SheetTab | null>(null);
   const sheetRef = useRef<BottomSheet>(null);
   const router = useRouter();
+
+  // Pending snap index — set before a state change that alters snapPoints.
+  // A useEffect watches snapPoints and fires snapToIndex once Gorhom's
+  // internal Reanimated state has been updated with the new array, preventing
+  // the out-of-bounds crash that occurred with the previous setTimeout approach.
+  const pendingSnapIndexRef = useRef<number | null>(null);
+  // Transition lock — drop tap events that arrive while the sheet is animating.
+  const sheetTransitioningRef = useRef(false);
 
   useEffect(() => {
     if (activeWalkId) setFgPointsWritten(0);
@@ -535,7 +545,7 @@ export default function MapScreen() {
         if (loc.coords.altitude != null) setLiveAltitude(loc.coords.altitude);
 
         // Move camera if follow mode is active and no review is open.
-        if (followLocation && !isReviewActive) {
+        if (followLocationRef.current && !isReviewActive) {
           cameraRef.current?.setCamera({
             centerCoordinate: [loc.coords.longitude, loc.coords.latitude],
             zoomLevel: 15,
@@ -594,7 +604,7 @@ export default function MapScreen() {
     const adj = (n: number) => `${n + navAdjPct}%`;
     if (activeSheet === 'library') return [adj(92)];
     if (activeSheet === 'profile') return [adj(60)];
-    if (activeSheet === 'record' && isActive) return ['23%', '33%', '43%', adj(58)];
+    if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(43), adj(58)];
     return [adj(58)]; // record idle, or closed default
   }, [activeSheet, isActive, navAdjPct]);
 
@@ -605,10 +615,24 @@ export default function MapScreen() {
     sheetRef.current?.close();
   }, []);
 
+  // Execute any pending snapToIndex AFTER snapPoints have been committed to
+  // BottomSheet as a prop. Child component effects (Gorhom's) run before parent
+  // effects in React, so by the time this fires, Gorhom's internal Reanimated
+  // shared value already reflects the new array — index 3 on a 4-element array
+  // is safe, whereas the old setTimeout(50ms) had no such guarantee.
+  useEffect(() => {
+    if (pendingSnapIndexRef.current === null) return;
+    const idx = pendingSnapIndexRef.current;
+    pendingSnapIndexRef.current = null;
+    sheetRef.current?.snapToIndex(idx);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapPoints]);
+
   // Close the sheet as soon as the walk starts completing so the review screen
   // is fully visible when it navigates in.
   useEffect(() => {
     if (state.phase === 'completing' || state.phase === 'completed') {
+      pendingSnapIndexRef.current = null; // cancel any pending snap
       sheetRef.current?.close();
       setActiveSheet(null);
     }
@@ -617,41 +641,34 @@ export default function MapScreen() {
   const prevIsActive = useRef(false);
   useEffect(() => {
     if (isActive && !prevIsActive.current) {
+      pendingSnapIndexRef.current = 0;
       setActiveSheet('record');
-      setTimeout(() => { sheetRef.current?.snapToIndex(0); }, 0);
     }
     prevIsActive.current = isActive;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
   // Listen for external open requests (e.g. recording indicator bar tap)
   useEffect(() => {
     return sheetEvents.subscribe((sheet) => {
       const idx = sheet === 'record' && isActive ? 3 : 0;
+      pendingSnapIndexRef.current = idx;
       setActiveSheet(sheet);
-      setTimeout(() => { sheetRef.current?.snapToIndex(idx); }, 0);
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
   const handleTabPress = (tab: SheetTab) => {
+    if (sheetTransitioningRef.current) return; // drop taps during animation
     const idx = tab === 'record' && isActive ? 3 : 0;
-    console.log('[TabPress]', {
-      tab,
-      activeSheet,
-      isActive,
-      phase: state.phase,
-      sheetRef: !!sheetRef.current,
-      targetIdx: idx,
-      action: activeSheet === tab ? 'CLOSE' : 'OPEN',
-    });
     if (activeSheet === tab) {
-      sheetRef.current?.close();
+      sheetTransitioningRef.current = true;
       setActiveSheet(null);
+      sheetRef.current?.close();
     } else {
+      sheetTransitioningRef.current = true;
+      pendingSnapIndexRef.current = idx;
       setActiveSheet(tab);
-      setTimeout(() => {
-        console.log('[TabPress] calling snapToIndex', idx, 'sheetRef:', !!sheetRef.current);
-        sheetRef.current?.snapToIndex(idx);
-      }, 0);
     }
   };
 
@@ -702,35 +719,48 @@ export default function MapScreen() {
         )}
       </MapboxGL.MapView>
 
-      {/* Follow-location toggle — top-right corner, hidden while in review */}
-      {!isReviewActive && perms.foreground === 'granted' && (
-        <TouchableOpacity
-          style={[
-            styles.followButton,
-            { top: insets.top + Spacing.sm },
-            followLocation
-              ? { backgroundColor: colors.primary }
-              : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
-          ]}
-          onPress={() => {
-            const next = !followLocation;
-            setFollowLocation(next);
-            if (next && currentLocation) {
-              cameraRef.current?.setCamera({
-                centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
-                zoomLevel: 15,
-                animationDuration: 400,
-              });
-            }
-          }}
-          activeOpacity={0.8}
-        >
-          <IconSymbol
-            name="location.fill"
-            size={20}
-            color={followLocation ? '#fff' : colors.textMuted}
-          />
-        </TouchableOpacity>
+      {/* Map button strip — top-right, hidden when full-screen panels are open.
+          Rendered BEFORE BottomSheet intentionally: no zIndex means natural JSX
+          stacking order keeps the strip behind the sheet. */}
+      {!isReviewActive && perms.foreground === 'granted' && (activeSheet === null || activeSheet === 'record') && (
+        <View style={[styles.mapButtonStrip, { top: insets.top + Spacing.sm }]}>
+          {/* Follow-location toggle */}
+          <TouchableOpacity
+            style={[
+              styles.mapButton,
+              followLocation
+                ? { backgroundColor: colors.primary }
+                : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
+            ]}
+            onPress={() => {
+              const next = !followLocation;
+              setFollowLocation(next);
+              if (next && currentLocation) {
+                cameraRef.current?.setCamera({
+                  centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
+                  zoomLevel: 15,
+                  animationDuration: 400,
+                });
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <IconSymbol
+              name="location.fill"
+              size={20}
+              color={followLocation ? '#fff' : colors.textMuted}
+            />
+          </TouchableOpacity>
+
+          {/* Photo button — only while actively recording */}
+          {isActive && state.phase === 'recording' && (
+            <PhotoFab
+              walkId={state.walkId}
+              currentLocation={currentLocation}
+              style={styles.mapButton}
+            />
+          )}
+        </View>
       )}
 
       {/* Recording status badge — top-centre map overlay */}
@@ -740,12 +770,7 @@ export default function MapScreen() {
         </View>
       )}
 
-      {/* Photo FAB — pinned at ~25% from top of screen while recording */}
-      {isActive && state.phase === 'recording' && (
-        <View style={styles.fabContainer}>
-          <PhotoFab walkId={state.walkId} currentLocation={currentLocation} />
-        </View>
-      )}
+      {/* Photo FAB is now part of the map button strip above */}
 
       {/* Completing overlay */}
       {state.phase === 'completing' && (
@@ -785,8 +810,15 @@ export default function MapScreen() {
         backgroundStyle={{ backgroundColor: colors.backgroundCard }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
-          console.log('[BottomSheet onChange]', { index, activeSheet });
-          if (index === -1) setActiveSheet(null);
+          // Check the lock BEFORE clearing it so we can distinguish a
+          // programmatic transition from a user-initiated drag-to-close.
+          const wasTransitioning = sheetTransitioningRef.current;
+          sheetTransitioningRef.current = false;
+          // Only clear activeSheet on a -1 that WE didn't initiate.
+          // During a programmatic tab switch Gorhom can fire intermediate
+          // onChange events (including -1) while re-anchoring to new snap
+          // points — honouring those would override the intended activeSheet.
+          if (index === -1 && !wasTransitioning) setActiveSheet(null);
         }}
       >
         {activeSheet === 'record' && (
@@ -855,22 +887,25 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.lg,
     zIndex: 10,
   },
-  fabContainer: { position: 'absolute', top: '25%', right: Spacing.base, zIndex: 15 },
-  followButton: {
+  mapButtonStrip: {
     position: 'absolute',
     right: Spacing.base,
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    // No zIndex — render order (before BottomSheet) keeps this behind the sheet.
+  },
+  mapButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 15,
-    // Shadow so it reads over the map
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
-    elevation: 4,
+    elevation: 2,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

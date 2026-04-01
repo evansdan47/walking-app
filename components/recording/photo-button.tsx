@@ -4,12 +4,15 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from 'expo-router';
 import { useRef } from 'react';
 import {
+    StyleProp,
     StyleSheet,
     Text,
     TouchableOpacity,
     View,
+    ViewStyle,
 } from 'react-native';
 
+import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { insertPhoto } from '@/lib/db/walk-photos';
@@ -84,19 +87,21 @@ export function PhotoFab({
   walkId,
   currentLocation,
   disabled = false,
-}: PhotoButtonProps) {
+  style,
+  iconColor,
+}: PhotoButtonProps & { style?: StyleProp<ViewStyle>; iconColor?: string }) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const [, requestPermission] = useCameraPermissions();
 
   return (
     <TouchableOpacity
-      style={[styles.fab, { backgroundColor: colors.secondary }, disabled && { opacity: 0.4 }]}
+      style={[styles.fab, { backgroundColor: colors.secondary }, style, disabled && { opacity: 0.4 }]}
       onPress={() => { void requestPermission(); }}
       disabled={disabled}
       activeOpacity={0.8}
     >
-      <Text style={styles.fabText}>📷</Text>
+      <IconSymbol name="camera.fill" size={20} color={iconColor ?? '#fff'} />
     </TouchableOpacity>
   );
 }

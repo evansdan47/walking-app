@@ -5,6 +5,11 @@ import { StyleSheet, View } from 'react-native';
 import { Colors } from '@/constants/theme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import { buildRouteGeoJSON, type RoutePoint } from '@/lib/review/build-route';
+import {
+    buildSegmentedRoute,
+    type RouteColours,
+    type RouteDisplayMode,
+} from '@/lib/review/route-display-modes';
 
 // ---------------------------------------------------------------------------
 // Marker components
@@ -54,6 +59,10 @@ interface ReviewRouteLayerProps {
   photos?: WalkPhoto[];
   /** Called when the user taps a photo annotation. */
   onPhotoTap?: (photo: WalkPhoto) => void;
+  /** Controls how the route polyline is coloured. Defaults to 'route'. */
+  mode?: RouteDisplayMode;
+  /** Override the positive/negative/neutral segment colours. */
+  colours?: RouteColours;
 }
 
 /**
@@ -67,8 +76,12 @@ interface ReviewRouteLayerProps {
  * Renders nothing when points is empty — the parent screen should show a
  * placeholder in that case rather than relying on this component.
  */
-export function ReviewRouteLayer({ points, photos = [], onPhotoTap }: ReviewRouteLayerProps) {
+export function ReviewRouteLayer({ points, photos = [], onPhotoTap, mode = 'route', colours }: ReviewRouteLayerProps) {
   const routeGeoJSON = useMemo(() => buildRouteGeoJSON(points), [points]);
+  const segmentedGeoJSON = useMemo(
+    () => buildSegmentedRoute(points, mode, colours),
+    [points, mode, colours],
+  );
   const bounds = useMemo(() => (points.length >= 2 ? computeBounds(points) : null), [points]);
 
   if (points.length === 0) return null;
@@ -90,13 +103,28 @@ export function ReviewRouteLayer({ points, photos = [], onPhotoTap }: ReviewRout
         />
       )}
 
-      {/* Route polyline */}
-      {points.length >= 2 && (
+      {/* Route polyline — single colour for 'route' mode, per-segment colour otherwise */}
+      {points.length >= 2 && mode === 'route' && (
         <MapboxGL.ShapeSource id="review-route" shape={routeGeoJSON}>
           <MapboxGL.LineLayer
             id="review-route-line"
             style={{
               lineColor: Colors.light.primary,
+              lineWidth: 4,
+              lineCap: 'round',
+              lineJoin: 'round',
+              lineOpacity: 0.9,
+            }}
+          />
+        </MapboxGL.ShapeSource>
+      )}
+      {points.length >= 2 && mode !== 'route' && segmentedGeoJSON && (
+        <MapboxGL.ShapeSource id="review-route-segmented" shape={segmentedGeoJSON as GeoJSON.FeatureCollection}>
+          <MapboxGL.LineLayer
+            id="review-route-line-segmented"
+            style={{
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              lineColor: ['get', 'color'] as any,
               lineWidth: 4,
               lineCap: 'round',
               lineJoin: 'round',

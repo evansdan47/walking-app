@@ -1,13 +1,13 @@
 import { ClerkProvider } from '@clerk/expo';
 import {
-    Inter_400Regular,
-    Inter_500Medium,
-    Inter_700Bold,
-    useFonts,
+  Inter_400Regular,
+  Inter_500Medium,
+  Inter_700Bold,
+  useFonts,
 } from '@expo-google-fonts/inter';
 import {
-    PlusJakartaSans_700Bold,
-    PlusJakartaSans_800ExtraBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
 } from '@expo-google-fonts/plus-jakarta-sans';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import Mapbox from '@rnmapbox/maps';
@@ -94,6 +94,7 @@ export default function RootLayout() {
                 <Stack>
                   <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                   <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                  <Stack.Screen name="sso-callback" options={{ headerShown: false }} />
                   <Stack.Screen name="walk-summary" options={{ headerShown: false }} />
                   <Stack.Screen
                     name="walk-review"
