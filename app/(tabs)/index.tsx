@@ -9,12 +9,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
     ActivityIndicator,
     Alert,
+    Dimensions,
     Pressable,
     StyleSheet,
     Switch,
     Text,
     TouchableOpacity,
-    View,
+    useWindowDimensions,
+    View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -41,6 +43,7 @@ import { api } from '@/convex/_generated/api';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFeatureFlags } from '@/hooks/use-feature-flags';
 import { useLocationPermission } from '@/hooks/use-location-permission';
+import { useStepCounter } from '@/hooks/use-step-counter';
 import { sheetEvents } from '@/lib/ui/sheet-events';
 import MapboxGL from '@rnmapbox/maps';
 
@@ -167,6 +170,7 @@ function RecordSheetContent({
   displayAccuracy,
   pointCount,
   fgPointsWritten,
+  stepCount,
   currentLocation,
   start,
   pause,
@@ -184,11 +188,12 @@ function RecordSheetContent({
   displayAccuracy: number | null;
   pointCount: number;
   fgPointsWritten: number;
+  stepCount: number;
   currentLocation: { latitude: number; longitude: number } | null;
   start: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
-  stop: () => Promise<void>;
+  stop: (stepCount?: number) => Promise<void>;
   reset: () => void;
 }) {
   // Auto-reset to idle if we arrive here after a session completed
@@ -244,7 +249,7 @@ function RecordSheetContent({
           />
           <StatCard
             label="Step Count"
-            value="--"
+            value={stepCount > 0 ? String(stepCount) : '--'}
             size="sm"
             align="center"
           />
@@ -324,9 +329,11 @@ function HistorySheetContent({
       ListHeaderComponent={
         <View style={sheetStyles.historyHeader}>
           <Text style={[sheetStyles.historyCount, { color: colors.textMuted }]}>{walkLabel}</Text>
-          <TouchableOpacity onPress={() => router.push('/(tabs)/library')}>
-            <Text style={[sheetStyles.viewOnMap, { color: colors.primary }]}>View on map</Text>
-          </TouchableOpacity>
+          {walkCount > 0 && (
+            <TouchableOpacity onPress={() => router.push('/(tabs)/library')}>
+              <Text style={[sheetStyles.viewOnMap, { color: colors.primary }]}>View on map</Text>
+            </TouchableOpacity>
+          )}
         </View>
       }
       ListEmptyComponent={<EmptyWalkHistory />}
@@ -505,6 +512,10 @@ export default function MapScreen() {
   const [liveAltitude, setLiveAltitude] = useState<number | null>(null);
   const [fgPointsWritten, setFgPointsWritten] = useState(0);
 
+  // Follow-location toggle: when on, the camera re-centres on every position update.
+  const [followLocation, setFollowLocation] = useState(true);
+  const cameraRef = useRef<MapboxGL.Camera>(null);
+
   // Sheet state
   const [activeSheet, setActiveSheet] = useState<SheetTab | null>(null);
   const sheetRef = useRef<BottomSheet>(null);
@@ -522,6 +533,15 @@ export default function MapScreen() {
         setCurrentLocation({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
         if (loc.coords.accuracy != null) setLiveAccuracy(loc.coords.accuracy);
         if (loc.coords.altitude != null) setLiveAltitude(loc.coords.altitude);
+
+        // Move camera if follow mode is active and no review is open.
+        if (followLocation && !isReviewActive) {
+          cameraRef.current?.setCamera({
+            centerCoordinate: [loc.coords.longitude, loc.coords.latitude],
+            zoomLevel: 15,
+            animationDuration: 500,
+          });
+        }
 
         const walkId = activeWalkIdRef.current;
         if (walkId && phaseRef.current === 'recording') {
@@ -545,16 +565,38 @@ export default function MapScreen() {
   // Auto-open record sheet when recording starts
   const isActive = state.phase === 'recording' || state.phase === 'paused';
 
+  const stepCount = useStepCounter(isActive);
+  const stepCountRef = useRef(0);
+  stepCountRef.current = stepCount;
+
+  // Detect software navigation bar height so snap points account for the
+  // space it steals. Two cases:
+  //   1. Older Android (non-edge-to-edge): window.height < screen.height because
+  //      the nav bar sits below the app window; insets.bottom is typically 0.
+  //   2. Edge-to-edge Android: window covers the full screen; insets.bottom > 0
+  //      reports how much the nav bar overlaps app content.
+  const { height: windowHeight } = useWindowDimensions();
+  const screenHeight = Dimensions.get('screen').height;
+  const statusBarHeight = Constants.statusBarHeight ?? 0;
+  const nonEdgeNavBar = Math.max(0, screenHeight - windowHeight - statusBarHeight);
+  const bottomNavHeight = nonEdgeNavBar > 0 ? nonEdgeNavBar : insets.bottom;
+  // Convert to percentage of window height (rounded up to avoid cutting off by 1px).
+  // Add an extra 2% padding when software nav buttons are present so the sheet
+  // content clears the button bar with a comfortable margin.
+  const navAdjPctRaw = windowHeight > 0 ? Math.ceil((bottomNavHeight / windowHeight) * 100) : 0;
+  const navAdjPct = navAdjPctRaw > 0 ? navAdjPctRaw + 2 : 0;
+
   // Snap points per sheet.
   // Record idle: single point (prevents unwanted drag-snapping on the welcome card)
   // Record active: multiple latches for peeking vs full stats
   // Library / Profile: single point each
   const snapPoints = useMemo(() => {
-    if (activeSheet === 'library') return ['92%'];
-    if (activeSheet === 'profile') return ['60%'];
-    if (activeSheet === 'record' && isActive) return ['23%', '33%', '43%', '58%'];
-    return ['58%']; // record idle, or closed default
-  }, [activeSheet, isActive]);
+    const adj = (n: number) => `${n + navAdjPct}%`;
+    if (activeSheet === 'library') return [adj(92)];
+    if (activeSheet === 'profile') return [adj(60)];
+    if (activeSheet === 'record' && isActive) return ['23%', '33%', '43%', adj(58)];
+    return [adj(58)]; // record idle, or closed default
+  }, [activeSheet, isActive, navAdjPct]);
 
   // Gorhom v5: the first snapToIndex call is silently dropped unless close() has
   // been called at least once (it initialises the internal Reanimated state).
@@ -630,21 +672,20 @@ export default function MapScreen() {
         logoEnabled={false}
         attributionEnabled={false}
         compassEnabled={false}
+        onTouchStart={() => setFollowLocation(false)}
       >
-        {/* Camera: yielded to ReviewRouteLayer when a walk review is open */}
+        {/* Camera: managed imperatively via cameraRef when follow mode is on.
+            Falls back to a static centre when no location is available yet. */}
         {!isReviewActive && (
           <MapboxGL.Camera
-            followUserLocation={state.phase === 'recording'}
-            followZoomLevel={15}
-            {...(state.phase !== 'recording'
-              ? {
-                  centerCoordinate: currentLocation
-                    ? [currentLocation.longitude, currentLocation.latitude]
-                    : [-0.1276, 51.5074],
-                  zoomLevel: currentLocation ? 15 : 10,
-                  animationMode: 'none' as const,
-                }
-              : {})}
+            ref={cameraRef}
+            centerCoordinate={
+              currentLocation
+                ? [currentLocation.longitude, currentLocation.latitude]
+                : [-0.1276, 51.5074]
+            }
+            zoomLevel={currentLocation ? 15 : 10}
+            animationMode="none"
           />
         )}
         <LivePositionLayer
@@ -660,6 +701,37 @@ export default function MapScreen() {
           />
         )}
       </MapboxGL.MapView>
+
+      {/* Follow-location toggle — top-right corner, hidden while in review */}
+      {!isReviewActive && perms.foreground === 'granted' && (
+        <TouchableOpacity
+          style={[
+            styles.followButton,
+            { top: insets.top + Spacing.sm },
+            followLocation
+              ? { backgroundColor: colors.primary }
+              : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
+          ]}
+          onPress={() => {
+            const next = !followLocation;
+            setFollowLocation(next);
+            if (next && currentLocation) {
+              cameraRef.current?.setCamera({
+                centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
+                zoomLevel: 15,
+                animationDuration: 400,
+              });
+            }
+          }}
+          activeOpacity={0.8}
+        >
+          <IconSymbol
+            name="location.fill"
+            size={20}
+            color={followLocation ? '#fff' : colors.textMuted}
+          />
+        </TouchableOpacity>
+      )}
 
       {/* Recording status badge — top-centre map overlay */}
       {isRecording && (
@@ -729,11 +801,12 @@ export default function MapScreen() {
             displayAccuracy={displayAccuracy}
             pointCount={pointCount}
             fgPointsWritten={fgPointsWritten}
+            stepCount={stepCount}
             currentLocation={currentLocation}
             start={start}
             pause={pause}
             resume={resume}
-            stop={stop}
+            stop={() => stop(stepCountRef.current)}
             reset={reset}
           />
         )}
@@ -783,6 +856,22 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   fabContainer: { position: 'absolute', top: '25%', right: Spacing.base, zIndex: 15 },
+  followButton: {
+    position: 'absolute',
+    right: Spacing.base,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 15,
+    // Shadow so it reads over the map
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 20,

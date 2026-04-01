@@ -1,18 +1,19 @@
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { Dimensions, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AppHeader } from '@/components/shared/app-header';
+import MapboxGL from '@rnmapbox/maps';
 
 import { PhotoViewerModal } from '@/components/review/photo-viewer-modal';
+import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { WalkActionBar } from '@/components/review/walk-action-bar';
 import { WalkHeaderCard } from '@/components/review/walk-header-card';
 import { WalkStatSummary } from '@/components/review/walk-stat-summary';
+import { AppHeader } from '@/components/shared/app-header';
 import { Colors, Spacing, Typography } from '@/constants/theme';
-import { useReviewRoute } from '@/contexts/review-route-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import { getPhotosForWalk } from '@/lib/db/walk-photos';
@@ -27,6 +28,14 @@ export default function WalkReviewScreen() {
   const insets = useSafeAreaInsets();
   const sheetRef = useRef<BottomSheet>(null);
 
+  // Same nav-bar height detection as the main map screen.
+  const { height: windowHeight } = useWindowDimensions();
+  const screenHeight = Dimensions.get('screen').height;
+  const nonEdgeNavBar = Math.max(0, screenHeight - windowHeight - insets.top);
+  const bottomNavHeight = nonEdgeNavBar > 0 ? nonEdgeNavBar : insets.bottom;
+  const navAdjPctRaw = windowHeight > 0 ? Math.ceil((bottomNavHeight / windowHeight) * 100) : 0;
+  const navAdjPct = navAdjPctRaw > 0 ? navAdjPctRaw + 2 : 0;
+
   // Load all data synchronously from SQLite
   const walk = useMemo(() => (walkId ? getWalk(walkId) : null), [walkId]);
   const route = useMemo(() => (walkId ? buildRoute(walkId) : []), [walkId]);
@@ -37,13 +46,6 @@ export default function WalkReviewScreen() {
   const [editingTitle, setEditingTitle] = useState(false);
   const [draft, setDraft] = useState<string>('');
 
-  // Push route data into the shared map context so the underlying screen can
-  // render ReviewRouteLayer without needing its own MapboxGL.MapView.
-  const { setReviewData, clearReviewData } = useReviewRoute();
-  useEffect(() => {
-    if (route.length > 0) setReviewData(route, photos, setSelectedPhoto);
-    return () => clearReviewData();
-  }, [route, photos, setReviewData, clearReviewData, setSelectedPhoto]);
   if (!walk) {
     return (
       <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
@@ -94,9 +96,20 @@ export default function WalkReviewScreen() {
 
   return (
     <View style={styles.container}>
-      {/* No MapboxGL.MapView here — the route is rendered via ReviewRouteContext
-          onto whichever screen's map is currently mounted underneath this
-          transparentModal overlay (recording screen or library screen). */}
+      {/* Own interactive map — full screen behind the bottom sheet */}
+      <MapboxGL.MapView
+        style={StyleSheet.absoluteFill}
+        styleURL={MapboxGL.StyleURL.Outdoors}
+        logoEnabled={false}
+        attributionEnabled={false}
+        compassEnabled={false}
+      >
+        <ReviewRouteLayer
+          points={route}
+          photos={photos}
+          onPhotoTap={setSelectedPhoto}
+        />
+      </MapboxGL.MapView>
 
       {/* Photo viewer — renders over everything */}
       <PhotoViewerModal
@@ -139,7 +152,7 @@ export default function WalkReviewScreen() {
       {/* Bottom sheet — index 0 = handle-only (collapsed), index 1 = 50% latched */}
       <BottomSheet
         ref={sheetRef}
-        snapPoints={['12%', '50%']}
+        snapPoints={[`${12 + navAdjPct}%`, `${50 + navAdjPct}%`]}
         index={1}
         enableDynamicSizing={false}
         enablePanDownToClose={false}
@@ -179,7 +192,7 @@ export default function WalkReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'transparent' },
+  container: { flex: 1 },
   headerOverlay: {
     position: 'absolute',
     top: 0,
@@ -224,6 +237,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderRadius: 8,
     paddingHorizontal: Spacing.sm,
+    paddingVertical: 0,
+    textAlignVertical: 'center',
     fontFamily: Typography.fontRegular,
     fontSize: Typography.sizes.base,
   },

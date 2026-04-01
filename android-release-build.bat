@@ -47,10 +47,52 @@ if errorlevel 1 (
 )
 echo.
 
+:: ── 2.5. Fix versionCode after prebuild (expo prebuild resets it to 1) ──────
+powershell -NoProfile -Command "(Get-Content '%ROOT%android\app\build.gradle') -replace 'versionCode = \d+|versionCode \d+', 'versionCode = (findProperty(''VERSION_CODE'') ?: ''1'').toInteger()' | Set-Content '%ROOT%android\app\build.gradle'"
+echo   Patched versionCode in build.gradle to read from gradle.properties.
+echo.
+
 :: ── 3. Bundle the release AAB via Gradle ─────────────────────
 echo [2/3] Building release AAB (this takes ~10 minutes)...
+
+:: Delete the autolinking JSON cache before Gradle starts.
+:: ReactSettingsExtension checks a lockfile hash (package.json, yarn.lock) to decide
+:: whether to re-run the autolinking command. After a package rename the lockfiles
+:: don't change, so it reuses the stale autolinking.json with the OLD package name —
+:: even though all source files are correct. Deleting this folder forces the settings
+:: plugin to regenerate autolinking.json with the correct package name.
+:: IMPORTANT: this must be done BEFORE gradlew is invoked (settings.gradle is evaluated
+:: before any task including :clean runs).
+if exist "%ROOT%android\build\generated\autolinking" (
+  echo   Removing stale autolinking cache ^(forces package name refresh^)...
+  rd /s /q "%ROOT%android\build\generated\autolinking"
+)
+
+:: Clear stale Gradle execution-history caches — these are NOT removed by
+:: "gradlew clean" and can cause generated files (e.g. ReactNativeApplicationEntryPoint.java)
+:: to be produced with a stale package name after a project rename.
+if exist "%ROOT%android\.gradle" (
+  echo   Removing stale Gradle cache ^(android\.gradle^)...
+  rd /s /q "%ROOT%android\.gradle"
+)
+if exist "%ROOT%node_modules\@react-native\gradle-plugin\.gradle" (
+  echo   Removing stale RN plugin Gradle cache...
+  rd /s /q "%ROOT%node_modules\@react-native\gradle-plugin\.gradle"
+)
+if exist "%ROOT%node_modules\expo-modules-autolinking\android\expo-gradle-plugin\.gradle" (
+  echo   Removing stale Expo autolinking Gradle cache...
+  rd /s /q "%ROOT%node_modules\expo-modules-autolinking\android\expo-gradle-plugin\.gradle"
+)
+
+:: Delete stale CMake cache — if present it blocks the clean task by referencing
+:: codegen JNI dirs that no longer exist after a package rename or node_modules change.
+if exist "%ROOT%android\app\.cxx" (
+  echo   Removing stale CMake cache ^(.cxx^)...
+  rd /s /q "%ROOT%android\app\.cxx"
+)
+
 cd /d "%ROOT%android"
-call .\gradlew bundleRelease --stacktrace
+call .\gradlew clean bundleRelease -x lint -x lintVitalRelease -x lintVitalAnalyzeRelease --stacktrace
 if errorlevel 1 (
   echo ERROR: Gradle build failed. Check output above.
   cd /d "%ROOT%"

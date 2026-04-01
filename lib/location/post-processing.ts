@@ -13,7 +13,7 @@ const MIN_ALTITUDE_COVERAGE = 0.5; // 50% of clean points must have altitude
  * Runs the 8-step post-processing pipeline on a completed walk.
  * Writes the resulting stats back to SQLite and creates a sync job.
  */
-export async function runPostProcessing(walkId: string): Promise<void> {
+export async function runPostProcessing(walkId: string, stepCount?: number): Promise<void> {
   const walk = getWalk(walkId);
   if (!walk) return;
 
@@ -34,6 +34,7 @@ export async function runPostProcessing(walkId: string): Promise<void> {
       movingTimeSeconds: 0,
       stoppedTimeSeconds: 0,
       pointCount: 0,
+      ...(stepCount !== undefined ? { stepCount } : {}),
     };
     updateWalkStats(walkId, emptyStats);
     createSyncJob({
@@ -116,6 +117,7 @@ export async function runPostProcessing(walkId: string): Promise<void> {
     ...(avgPaceSecsPerKm !== undefined ? { avgPaceSecsPerKm } : {}),
     ...(elevationGainMetres !== undefined ? { elevationGainMetres } : {}),
     ...(elevationLossMetres !== undefined ? { elevationLossMetres } : {}),
+    ...(stepCount !== undefined ? { stepCount } : {}),
   };
   updateWalkStats(walkId, stats);
 

@@ -8,7 +8,7 @@ export interface WalkSessionContextValue {
   start: () => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
-  stop: () => Promise<void>;
+  stop: (stepCount?: number) => Promise<void>;
   reset: () => void;
 }
 

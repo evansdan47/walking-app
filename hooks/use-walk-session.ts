@@ -1,11 +1,13 @@
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 
 import {
     clearActiveWalkId,
     createWalk,
+    getActiveWalkId,
+    getWalk,
     setActiveWalkId,
     updateWalkStatus,
 } from '@/lib/db/walks';
@@ -21,14 +23,56 @@ export type WalkSessionState =
   | { phase: 'completing'; walkId: string }
   | { phase: 'completed'; walkId: string };
 
+/**
+ * Reads SQLite synchronously to determine the initial session state.
+ * Used as the lazy initialiser for useState so the UI starts in the correct
+ * phase immediately — without a flicker from idle → recording.
+ */
+function resolveInitialState(): WalkSessionState {
+  const walkId = getActiveWalkId();
+  if (!walkId) return { phase: 'idle' };
+
+  const walk = getWalk(walkId);
+  if (!walk || walk.status === 'completed') {
+    // Stale pointer (walk was already completed). Clean up.
+    clearActiveWalkId();
+    return { phase: 'idle' };
+  }
+
+  if (walk.status === 'recording') {
+    return { phase: 'recording', walkId: walk.id, startedAt: walk.startedAt };
+  }
+  if (walk.status === 'paused') {
+    return { phase: 'paused', walkId: walk.id, startedAt: walk.startedAt, pausedAt: Date.now() };
+  }
+
+  return { phase: 'idle' };
+}
+
 export function useWalkSession() {
-  const [state, setState] = useState<WalkSessionState>({ phase: 'idle' });
+  // Lazy initialiser: on mount, check SQLite for an interrupted session so
+  // that if the OS killed the process while recording, we resume automatically.
+  const [state, setState] = useState<WalkSessionState>(resolveInitialState);
   const { startTracking, stopTracking } = useLocationTask();
   const router = useRouter();
+
+  // Keep a ref so the recovery effect below can call startTracking without
+  // it appearing in the dependency array (intentional one-shot effect).
+  const startTrackingRef = useRef(startTracking);
+  useEffect(() => { startTrackingRef.current = startTracking; });
 
   // Track total paused duration for the elapsed timer
   const pausedDurationMsRef = useRef(0);
   const pausedAtRef = useRef<number | null>(null);
+
+  // If we recovered a recording session from SQLite, re-attach the foreground
+  // location service. This fires once on mount only.
+  useEffect(() => {
+    if (state.phase === 'recording') {
+      void startTrackingRef.current();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const start = useCallback(async () => {
     const walkId = randomUUID();
@@ -64,7 +108,7 @@ export function useWalkSession() {
     setState({ phase: 'recording', walkId: state.walkId, startedAt: state.startedAt });
   }, [state, startTracking]);
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(async (stepCount?: number) => {
     if (state.phase !== 'recording' && state.phase !== 'paused') return;
     const { walkId } = state;
 
@@ -74,7 +118,7 @@ export function useWalkSession() {
     setState({ phase: 'completing', walkId });
 
     // Post-processing is async — when done, navigate to review
-    void runPostProcessing(walkId).then(() => {
+    void runPostProcessing(walkId, stepCount).then(() => {
       setState({ phase: 'completed', walkId });
       router.push({ pathname: '/walk-review', params: { walkId } });
     });

@@ -9,6 +9,7 @@ export interface WalkStats {
   elevationGainMetres?: number | undefined;
   elevationLossMetres?: number | undefined;
   pointCount: number;
+  stepCount?: number | undefined;
 }
 
 export interface Walk {
