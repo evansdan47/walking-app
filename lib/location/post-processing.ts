@@ -3,6 +3,10 @@ import { randomUUID } from 'expo-crypto';
 import { createSyncJob } from '../db/sync-jobs';
 import { getPointsForWalk, markPointsClean } from '../db/track-points';
 import { getWalk, updateWalkStats, type WalkStats } from '../db/walks';
+import { readCaloriesForWalk } from '../health-connect/calories';
+import { writeExerciseSession } from '../health-connect/exercise-session';
+import { readHeartRateForWalk } from '../health-connect/heart-rate';
+import { readStepsBetween } from '../health-connect/steps';
 import { haversineMetres } from './haversine';
 import { filterCleanPointIds } from './point-filter';
 
@@ -107,7 +111,7 @@ export async function runPostProcessing(walkId: string, stepCount?: number): Pro
     elevationLossMetres = Math.round(loss);
   }
 
-  // Step 7 – Save stats
+  // Step 7 – Save initial stats (without HC data — written before the async HC calls)
   const stats: WalkStats = {
     distanceMetres: Math.round(distanceMetres),
     durationSeconds,
@@ -123,4 +127,34 @@ export async function runPostProcessing(walkId: string, stepCount?: number): Pro
 
   // Step 8 – Create sync job
   createSyncJob({ id: randomUUID(), walkId, deviceId: walk.deviceId });
+
+  // Step 9 – Health Connect enrichment (best-effort, non-blocking)
+  // Runs after the sync job is created so a HC failure never prevents Convex sync.
+  if (walk.endedAt) {
+    const [caloriesKcal, heartRate, hcSynced, hcStepCount] = await Promise.all([
+      readCaloriesForWalk(walk.startedAt, walk.endedAt),
+      readHeartRateForWalk(walk.startedAt, walk.endedAt),
+      writeExerciseSession(
+        {
+          startedAt: walk.startedAt,
+          endedAt: walk.endedAt,
+          title: walk.title,
+          distanceMetres: stats.distanceMetres,
+          ...(stats.stepCount != null ? { stepCount: stats.stepCount } : {}),
+        },
+        clean,
+      ),
+      readStepsBetween(walk.startedAt, walk.endedAt),
+    ]);
+
+    const enriched: WalkStats = {
+      ...stats,
+      ...(caloriesKcal !== null ? { caloriesKcal } : {}),
+      ...(heartRate !== null ? { avgHeartRateBpm: heartRate.avgBpm, maxHeartRateBpm: heartRate.maxBpm } : {}),
+      hcSynced,
+      ...(hcStepCount !== null ? { hcStepCount } : {}),
+    };
+
+    updateWalkStats(walkId, enriched);
+  }
 }

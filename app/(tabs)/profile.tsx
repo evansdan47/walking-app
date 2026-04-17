@@ -77,6 +77,15 @@ export default function ProfileScreen() {
           </ThemedText>
         ) : null}
 
+        <Pressable
+          style={[styles.signOutButton, { borderColor: colors.border }]}
+          onPress={handleSignOut}
+        >
+          <ThemedText type="bodyMed" style={{ color: colors.textMuted }}>
+            Sign Out
+          </ThemedText>
+        </Pressable>
+
         {/* Dev: Route Colours */}
         <View style={[styles.devSection, { borderColor: colors.border }]}>
           <View style={styles.devHeader}>
@@ -111,14 +120,7 @@ export default function ProfileScreen() {
 
         <View style={styles.spacer} />
 
-        <Pressable
-          style={[styles.signOutButton, { borderColor: colors.border }]}
-          onPress={handleSignOut}
-        >
-          <ThemedText type="bodyMed" style={{ color: colors.textMuted }}>
-            Sign Out
-          </ThemedText>
-        </Pressable>
+  
 
         <ThemedText type="caption" style={[styles.version, { color: colors.textMuted }]}>
           v{appVersion}

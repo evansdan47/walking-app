@@ -2,21 +2,22 @@ import { useAuth, useUser } from '@clerk/expo';
 import BottomSheet, { BottomSheetFlatList, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useMutation } from 'convex/react';
 import Constants from 'expo-constants';
-import { randomUUID } from 'expo-crypto';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    Pressable,
-    StyleSheet,
-    Switch,
-    Text,
-    TouchableOpacity,
-    useWindowDimensions,
-    View
+  ActivityIndicator,
+  Alert,
+  AppState,
+  Dimensions,
+  Linking,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TouchableOpacity,
+  useWindowDimensions,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,10 +33,10 @@ import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
 import { HistoryWalkCard } from '@/components/review/history-walk-card';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { PermissionGate } from '@/components/shared/permission-gate';
-import { RecordingIndicatorBar } from '@/components/shared/recording-indicator-bar';
 import { StatCard } from '@/components/shared/stat-card';
 import { StatGrid } from '@/components/shared/stat-grid';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { RouteColourPicker } from '@/components/ui/route-colour-picker';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useReviewRoute } from '@/contexts/review-route-context';
 import { useWalkSessionContext } from '@/contexts/walk-session-context';
@@ -43,11 +44,23 @@ import { api } from '@/convex/_generated/api';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFeatureFlags } from '@/hooks/use-feature-flags';
 import { useLocationPermission } from '@/hooks/use-location-permission';
+import { useRouteColours } from '@/hooks/use-route-colours';
 import { useStepCounter } from '@/hooks/use-step-counter';
+import {
+  checkHealthConnectPermissions,
+  isHealthConnectAvailable,
+  isHealthConnectUpdateRequired,
+  openHealthConnectAppSettings,
+  openHealthConnectMainSettings,
+  requestHealthConnectPermissions,
+} from '@/lib/health-connect';
 import { sheetEvents } from '@/lib/ui/sheet-events';
+import Slider from '@react-native-community/slider';
 import MapboxGL from '@rnmapbox/maps';
+import { useCameraPermissions } from 'expo-camera';
+import { Pedometer } from 'expo-sensors';
 
-import { getPointsForWalk, insertPoint } from '@/lib/db/track-points';
+import { getPointsForWalk } from '@/lib/db/track-points';
 import { listCompletedWalks, type Walk } from '@/lib/db/walks';
 import { haversineMetres } from '@/lib/location/haversine';
 
@@ -169,8 +182,8 @@ function RecordSheetContent({
   displayAltitude,
   displayAccuracy,
   pointCount,
-  fgPointsWritten,
   stepCount,
+  stepSource,
   currentLocation,
   start,
   pause,
@@ -187,8 +200,8 @@ function RecordSheetContent({
   displayAltitude: number | null;
   displayAccuracy: number | null;
   pointCount: number;
-  fgPointsWritten: number;
   stepCount: number;
+  stepSource: import('@/hooks/use-step-counter').StepSource;
   currentLocation: { latitude: number; longitude: number } | null;
   start: () => Promise<void>;
   pause: () => Promise<void>;
@@ -250,6 +263,7 @@ function RecordSheetContent({
           <StatCard
             label="Step Count"
             value={stepCount > 0 ? String(stepCount) : '--'}
+            {...(stepSource != null && { unit: stepSource === 'hc' ? 'HC' : 'D' })}
             size="sm"
             align="center"
           />
@@ -273,7 +287,7 @@ function RecordSheetContent({
         />
         <View style={sheetStyles.debugRow}>
           <Text style={[sheetStyles.debugText, { color: colors.textMuted }]}>
-            pts: {pointCount} · fg: {fgPointsWritten}
+            pts: {pointCount}
           </Text>
           <Text style={[sheetStyles.debugText, { color: colors.textMuted }]}>
             {currentLocation
@@ -344,19 +358,312 @@ function HistorySheetContent({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Permissions section (profile sheet)
+// ---------------------------------------------------------------------------
+
+type PermRowStatus = 'checking' | 'granted' | 'not_granted' | 'denied' | 'unavailable' | 'update_required';
+
+function PermissionRow({
+  colors,
+  name,
+  description,
+  status,
+  onRequest,
+  detail,
+  secondaryLink,
+  badge,
+  showDivider = true,
+}: {
+  colors: ColorPalette;
+  name: string;
+  description: string;
+  status: PermRowStatus;
+  onRequest?: () => void;
+  detail?: string;
+  secondaryLink?: { label: string; onPress: () => void };
+  badge?: ReactNode;
+  showDivider?: boolean;
+}) {
+  const pill =
+    status === 'granted'
+      ? { bg: colors.successMuted,    text: colors.success,   label: 'Granted' }
+      : status === 'not_granted'
+      ? { bg: colors.primaryMuted,    text: colors.primary,   label: 'Required' }
+      : status === 'denied'
+      ? { bg: colors.primaryMuted,    text: colors.primary,   label: 'Denied' }
+      : status === 'update_required'
+      ? { bg: colors.primaryMuted,    text: colors.primary,   label: 'Update required' }
+      : status === 'unavailable'
+      ? { bg: colors.backgroundMuted, text: colors.textMuted, label: 'Unavailable' }
+      : { bg: colors.backgroundMuted, text: colors.textMuted, label: 'Checking…' };
+
+  const actionLabel =
+    status === 'denied'          ? 'Open Settings' :
+    status === 'update_required' ? 'Update in Play Store' :
+    status === 'granted'         ? 'Manage access' :
+    'Grant access';
+
+  // Show the action link only when there is an onRequest handler — callers are
+  // responsible for NOT passing onRequest when the permission is already granted
+  // and there is nothing useful to request (e.g. location / camera when granted).
+  const needsAction = onRequest != null;
+
+  return (
+    <>
+      <View style={[sheetStyles.flagRow, { alignItems: 'flex-start' }]}>
+        <View style={[sheetStyles.flagLabel, { flex: 1 }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: Spacing.xs }}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>{name}</Text>
+            {badge}
+          </View>
+          <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>{description}</Text>
+          {detail ? (
+            <View style={{ marginTop: 4, paddingLeft: 8 }}>
+              {detail.split('\n').map((line) => {
+                const isGranted = line.startsWith('✓');
+                return (
+                  <Text
+                    key={line}
+                    style={[sheetStyles.flagDesc, { color: isGranted ? colors.success : colors.textMuted }]}
+                  >
+                    {line}
+                  </Text>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
+        <View style={[permStyles.pill, { backgroundColor: pill.bg }]}>
+          <Text style={[permStyles.pillText, { color: pill.text }]}>{pill.label}</Text>
+        </View>
+      </View>
+      {(needsAction || secondaryLink != null) && (
+        <View style={[permStyles.grantRow, { justifyContent: needsAction && secondaryLink != null ? 'space-between' : 'flex-end' }]}>
+          {needsAction && (
+            <Pressable onPress={onRequest} hitSlop={8}>
+              <Text style={[permStyles.grantText, { color: colors.primary }]}>{actionLabel}</Text>
+            </Pressable>
+          )}
+          {secondaryLink != null && (
+            <Pressable onPress={secondaryLink.onPress} hitSlop={8}>
+              <Text style={[permStyles.grantText, { color: colors.textMuted }]}>{secondaryLink.label}</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+      {showDivider && (
+        <View style={[permStyles.divider, { backgroundColor: colors.border }]} />
+      )}
+    </>
+  );
+}
+
+function PermissionsSection({ colors }: { colors: ColorPalette }) {
+  const locPerms = useLocationPermission();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+
+  // Pedometer — available on both platforms; foreground-only on Android
+  const [pedometerAvailable, setPedometerAvailable] = useState<boolean | null>(null);
+  const [pedometerPermission, setPedometerPermission] = useState<Awaited<ReturnType<typeof Pedometer.getPermissionsAsync>> | null>(null);
+
+  const checkPedometer = async () => {
+    const available = await Pedometer.isAvailableAsync();
+    setPedometerAvailable(available);
+    if (available) {
+      const perm = await Pedometer.getPermissionsAsync();
+      setPedometerPermission(perm);
+    }
+  };
+
+  useEffect(() => {
+    void checkPedometer();
+  }, []);
+
+  const pedometerStatus: PermRowStatus =
+    pedometerAvailable === null                     ? 'checking'   :
+    pedometerAvailable === false                    ? 'unavailable' :
+    pedometerPermission === null                    ? 'checking'   :
+    pedometerPermission.granted                     ? 'granted'    :
+    !pedometerPermission.canAskAgain                ? 'denied'     : 'not_granted';
+
+  const [hcStatus, setHcStatus] = useState<PermRowStatus>('checking');
+  const [hcDetail, setHcDetail] = useState<string | undefined>();
+
+  const checkHc = async () => {
+    const available = await isHealthConnectAvailable();
+    if (!available) {
+      const needsUpdate = await isHealthConnectUpdateRequired();
+      setHcStatus(needsUpdate ? 'update_required' : 'unavailable');
+      return;
+    }
+    const granted = await checkHealthConnectPermissions();
+    // "Core" only requires the read permissions — write permissions (ExerciseSession)
+    // are a separate category in HC's UI and may not be offered in the same dialog.
+    const hasCore = granted != null && granted.readSteps;
+    if (granted != null) {
+      // Always show individual breakdown so user can see what is/isn't granted.
+      // Names match what Android Health Connect displays in its permissions screen.
+      const parts: string[] = [
+        `${granted.readSteps          ? '✓' : '✗'} Steps`,
+        `${granted.readDistance       ? '✓' : '✗'} Distance`,
+        `${granted.readCalories       ? '✓' : '✗'} Active Calories`,
+        `${granted.readHeartRate      ? '✓' : '✗'} Heart Rate`,
+        `${granted.writeExerciseRoute ? '✓' : '✗'} Exercise Route`,
+      ];
+      setHcDetail(parts.join('\n'));
+    }
+    setHcStatus(hasCore ? 'granted' : 'not_granted');
+  };
+
+  useEffect(() => {
+    void checkHc();
+    // Re-check whenever the app comes back to the foreground (e.g. after the
+    // user grants permissions in the HC app or system settings).
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void checkHc();
+    });
+    return () => sub.remove();
+  }, []);
+
+  const handleHcRequest = async () => {
+    await requestHealthConnectPermissions();
+    // Re-check via getGrantedPermissions (already done inside requestHealthConnectPermissions),
+    // then refresh display state with the same check used on mount / foreground.
+    await checkHc();
+  };
+
+  const fgStatus: PermRowStatus =
+    !locPerms.loaded             ? 'checking' :
+    locPerms.foreground === 'granted' ? 'granted' :
+    locPerms.foreground === 'denied'  ? 'denied'  : 'not_granted';
+
+  const bgStatus: PermRowStatus =
+    !locPerms.loaded                       ? 'checking'    :
+    locPerms.foreground !== 'granted'      ? 'not_granted' :
+    locPerms.background === 'granted'      ? 'granted'     :
+    locPerms.background === 'denied'       ? 'denied'      : 'not_granted';
+
+  const cameraStatus: PermRowStatus =
+    cameraPermission == null              ? 'checking'  :
+    cameraPermission.granted              ? 'granted'   :
+    cameraPermission.status === 'denied'  ? 'denied'    : 'not_granted';
+
+  return (
+    <View style={[sheetStyles.flagsSection, { borderColor: colors.border }]}>
+      <Text style={[sheetStyles.flagsTitle, { color: colors.textMuted }]}>Permissions</Text>
+      {/* Only pass onRequest when there is something to do — granted perms need no action */}
+      <PermissionRow
+        colors={colors}
+        name="Location"
+        description="Required to record your walk route"
+        status={fgStatus}
+        {...(fgStatus === 'not_granted' || fgStatus === 'denied' ? {
+          onRequest: fgStatus === 'denied'
+            ? () => { void Linking.openSettings(); }
+            : () => { void locPerms.requestForeground(); },
+        } : {})}
+      />
+      <PermissionRow
+        colors={colors}
+        name="Background Location"
+        description="Keeps recording when the screen is off or the app is in the background"
+        status={bgStatus}
+        {...(bgStatus === 'not_granted' || bgStatus === 'denied' ? {
+          onRequest: bgStatus === 'denied'
+            ? () => { void Linking.openSettings(); }
+            : () => {
+                if (locPerms.foreground !== 'granted') {
+                  void locPerms.requestForeground().then(() => locPerms.requestBackground());
+                } else {
+                  void locPerms.requestBackground();
+                }
+              },
+        } : {})}
+      />
+      <PermissionRow
+        colors={colors}
+        name="Camera"
+        description="Take photos during a walk"
+        status={cameraStatus}
+        {...(cameraStatus === 'not_granted' || cameraStatus === 'denied' ? {
+          onRequest: cameraStatus === 'denied'
+            ? () => { void Linking.openSettings(); }
+            : () => { void requestCameraPermission(); },
+        } : {})}
+      />
+      <PermissionRow
+        colors={colors}
+        name="Pedometer"
+        description="Counts your steps in real time during a walk"
+        status={pedometerStatus}
+        {...(pedometerStatus === 'not_granted' ? {
+          onRequest: () => {
+            void Pedometer.requestPermissionsAsync().then((perm) => {
+              setPedometerPermission(perm);
+            });
+          },
+        } : pedometerStatus === 'denied' ? {
+          onRequest: () => { void Linking.openSettings(); },
+        } : {})}
+      />
+      <PermissionRow
+        colors={colors}
+        name="Health Connect"
+        description="Step counting and syncing completed walks to Android Health Connect"
+        status={hcStatus}
+        {...(hcDetail != null ? { detail: hcDetail } : {})}
+        badge={hcStatus === 'granted' || hcStatus === 'not_granted' ? (
+          <View style={[permStyles.hcBadge, { backgroundColor: colors.successMuted }]}>
+            <Text style={[permStyles.hcBadgeText, { color: colors.success }]}>Installed</Text>
+          </View>
+        ) : undefined}
+        {...(hcStatus === 'checking' ? {} :
+          hcStatus === 'unavailable' ? {
+            // HC not installed — offer Play Store link (no onRequest, just a secondary link)
+            secondaryLink: { label: 'Get Health Connect', onPress: () => { void Linking.openURL('market://details?id=com.google.android.apps.healthdata'); } },
+          } :
+          hcStatus === 'update_required' ? {
+            onRequest: () => { void Linking.openURL('market://details?id=com.google.android.apps.healthdata'); },
+          } :
+          hcStatus === 'not_granted' ? {
+            // First-time setup: show the requestPermission dialog.
+            onRequest: () => { void handleHcRequest(); },
+          } : {
+            // HC granted — always show Manage access (opens HC main settings so the
+            // user can toggle individual permissions) and View data.
+            onRequest: () => { openHealthConnectMainSettings(); },
+            secondaryLink: { label: 'View data', onPress: openHealthConnectAppSettings },
+          }
+        )}
+        showDivider={false}
+      />
+    </View>
+  );
+}
+
 function ProfileSheetContent({
   colors,
   insets,
   allowHistoryDuringRecording,
   onToggleAllowHistoryDuringRecording,
+  gpsAccuracyMultiplier,
+  onGpsAccuracyMultiplierChange,
+  forcePedometerSteps,
+  onToggleForcePedometerSteps,
 }: {
   colors: ColorPalette;
   insets: ReturnType<typeof useSafeAreaInsets>;
   allowHistoryDuringRecording: boolean;
   onToggleAllowHistoryDuringRecording: (value: boolean) => void;
+  gpsAccuracyMultiplier: number;
+  onGpsAccuracyMultiplierChange: (value: number) => void;
+  forcePedometerSteps: boolean;
+  onToggleForcePedometerSteps: (value: boolean) => void;
 }) {
   const { signOut } = useAuth();
   const { user } = useUser();
+  const { colours, setColour, resetColours } = useRouteColours();
   const upsertCurrentUser = useMutation(api.users.upsertCurrentUser);
 
   useEffect(() => {
@@ -397,6 +704,15 @@ function ProfileSheetContent({
       {email ? (
         <Text style={[sheetStyles.profileEmail, { color: colors.textMuted }]}>{email}</Text>
       ) : null}
+      <Pressable
+        style={[sheetStyles.signOutButton, { borderColor: colors.border }]}
+        onPress={handleSignOut}
+      >
+        <Text style={[sheetStyles.signOutText, { color: colors.textMuted }]}>Sign Out</Text>
+      </Pressable>
+
+      {/* Permissions */}
+      <PermissionsSection colors={colors} />
 
       {/* Feature flags */}
       <View style={[sheetStyles.flagsSection, { borderColor: colors.border }]}>
@@ -412,13 +728,56 @@ function ProfileSheetContent({
             trackColor={{ false: colors.border, true: colors.primary }}
           />
         </View>
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Force pedometer steps</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Use device pedometer for step counting even when Health Connect is available</Text>
+          </View>
+          <Switch
+            value={forcePedometerSteps}
+            onValueChange={onToggleForcePedometerSteps}
+            trackColor={{ false: colors.border, true: colors.primary }}
+          />
+        </View>
+        <View style={[sheetStyles.flagRow, { marginTop: Spacing.sm, flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>GPS jitter filter</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Multiplier applied to GPS accuracy radius — higher values filter more noise</Text>
+            </View>
+            <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 32, textAlign: 'right' }]}>
+              {gpsAccuracyMultiplier.toFixed(1)}×
+            </Text>
+          </View>
+          <Slider
+            style={{ width: '100%', height: 40 }}
+            minimumValue={1}
+            maximumValue={4}
+            step={0.1}
+            value={gpsAccuracyMultiplier}
+            onValueChange={(v) => onGpsAccuracyMultiplierChange(Math.round(v * 10) / 10)}
+            minimumTrackTintColor={colors.primary}
+            maximumTrackTintColor={colors.border}
+            thumbTintColor={colors.primary}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>1.0× (strict)</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>4.0× (loose)</Text>
+          </View>
+        </View>
       </View>
-      <Pressable
-        style={[sheetStyles.signOutButton, { borderColor: colors.border }]}
-        onPress={handleSignOut}
-      >
-        <Text style={[sheetStyles.signOutText, { color: colors.textMuted }]}>Sign Out</Text>
-      </Pressable>
+      {/* Route Colours */}
+      <View style={[sheetStyles.flagsSection, { borderColor: colors.border }]}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.xs }}>
+          <Text style={[sheetStyles.flagsTitle, { color: colors.textMuted }]}>Route Colours</Text>
+          <Pressable onPress={resetColours} hitSlop={8}>
+            <Text style={{ color: colors.primary, fontSize: Typography.sizes.xs }}>Reset</Text>
+          </Pressable>
+        </View>
+        <RouteColourPicker label="Positive (fast / descent)" colour={colours.positive} onChange={(hex) => setColour('positive', hex)} />
+        <RouteColourPicker label="Neutral (flat / indeterminate)" colour={colours.neutral} onChange={(hex) => setColour('neutral', hex)} />
+        <RouteColourPicker label="Negative (slow / ascent)" colour={colours.negative} onChange={(hex) => setColour('negative', hex)} />
+      </View>
       <Text style={[sheetStyles.version, { color: colors.textMuted }]}>v{appVersion}</Text>
     </BottomSheetScrollView>
   );
@@ -458,7 +817,6 @@ function TabBar({
         },
       ]}
     >
-      {isRecording && active !== 'record' && <RecordingIndicatorBar />}
       <View style={tabBarStyles.buttons}>
         {tabs.map((tab) => {
           const isActive = active === tab.id;
@@ -470,10 +828,15 @@ function TabBar({
               onPress={() => onPress(tab.id)}
               activeOpacity={0.7}
             >
-              <IconSymbol size={26} name={tab.icon as any} color={color} />
-              <Text style={[tabBarStyles.label, { color, fontFamily: Typography.fontMedium }]}>
-                {tab.label}
-              </Text>
+              <View style={[
+                tabBarStyles.pill,
+                isActive && { backgroundColor: colors.primary + '18' },
+              ]}>
+                <IconSymbol size={22} name={tab.icon as any} color={color} />
+                <Text style={[tabBarStyles.label, { color, fontFamily: Typography.fontMedium }]}>
+                  {tab.label}
+                </Text>
+              </View>
             </TouchableOpacity>
           );
         })}
@@ -498,11 +861,6 @@ export default function MapScreen() {
   const activeWalkId =
     state.phase === 'recording' || state.phase === 'paused' ? state.walkId : null;
 
-  const activeWalkIdRef = useRef<string | null>(activeWalkId);
-  const phaseRef = useRef<typeof state.phase>(state.phase);
-  activeWalkIdRef.current = activeWalkId;
-  phaseRef.current = state.phase;
-
   const { distanceMetres, paceSecsPerKm, lastAltitude, accuracy, pointCount, coordinates } =
     useLiveStats(activeWalkId);
 
@@ -510,7 +868,6 @@ export default function MapScreen() {
     useState<{ latitude: number; longitude: number } | null>(null);
   const [liveAccuracy, setLiveAccuracy] = useState<number | null>(null);
   const [liveAltitude, setLiveAltitude] = useState<number | null>(null);
-  const [fgPointsWritten, setFgPointsWritten] = useState(0);
 
   // Follow-location toggle: when on, the camera re-centres on every position update.
   const [followLocation, setFollowLocation] = useState(true);
@@ -523,17 +880,33 @@ export default function MapScreen() {
   const sheetRef = useRef<BottomSheet>(null);
   const router = useRouter();
 
-  // Pending snap index — set before a state change that alters snapPoints.
-  // A useEffect watches snapPoints and fires snapToIndex once Gorhom's
-  // internal Reanimated state has been updated with the new array, preventing
-  // the out-of-bounds crash that occurred with the previous setTimeout approach.
-  const pendingSnapIndexRef = useRef<number | null>(null);
-  // Transition lock — drop tap events that arrive while the sheet is animating.
-  const sheetTransitioningRef = useRef(false);
+  // Cancel-then-schedule pattern: always clear any pending snap before
+  // scheduling a new one so rapid taps can never stack concurrent
+  // snapToIndex calls. 150 ms is well beyond the time React needs to commit
+  // the new snapPoints prop and Reanimated needs to dispatch it to the UI
+  // thread, so the index is always in-bounds when the call fires.
+  const pendingSnapRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (activeWalkId) setFgPointsWritten(0);
-  }, [activeWalkId]);
+  // When opening the record sheet while it is currently closed, we must snap
+  // to index 0 first (safe regardless of snap-point array length) and then,
+  // once onChange confirms the sheet has settled, snap to the true target.
+  // This prevents the "index out of range" crash that occurs when snapToIndex(3)
+  // fires before Gorhom's UI-thread worklet has processed the new 4-element
+  // snapPoints array.
+  const pendingFinalSnapRef = useRef<number | null>(null);
+
+  const scheduleSnap = (idx: number) => {
+    if (pendingSnapRef.current !== null) clearTimeout(pendingSnapRef.current);
+    pendingSnapRef.current = setTimeout(() => {
+      pendingSnapRef.current = null;
+      sheetRef.current?.snapToIndex(idx);
+    }, 150);
+  };
+
+  // When we close the sheet programmatically we must suppress the resulting
+  // onChange(-1) so it doesn't overwrite a subsequent setActiveSheet call
+  // that was queued at the same time (e.g. close then immediately reopen).
+  const ignoreNextCloseRef = useRef(false);
 
   useEffect(() => {
     if (perms.foreground !== 'granted') return;
@@ -552,21 +925,6 @@ export default function MapScreen() {
             animationDuration: 500,
           });
         }
-
-        const walkId = activeWalkIdRef.current;
-        if (walkId && phaseRef.current === 'recording') {
-          insertPoint({
-            id: randomUUID(),
-            walkId,
-            timestamp: loc.timestamp,
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-            altitudeMetres: loc.coords.altitude ?? null,
-            speedMps: loc.coords.speed ?? null,
-            accuracyMetres: loc.coords.accuracy ?? 0,
-          });
-          setFgPointsWritten((n) => n + 1);
-        }
       },
     );
     return () => { void sub.then((s) => s.remove()); };
@@ -575,7 +933,9 @@ export default function MapScreen() {
   // Auto-open record sheet when recording starts
   const isActive = state.phase === 'recording' || state.phase === 'paused';
 
-  const stepCount = useStepCounter(isActive);
+  const walkStartedAt =
+    state.phase === 'recording' || state.phase === 'paused' ? state.startedAt : null;
+  const { steps: stepCount, source: stepSource } = useStepCounter(isActive, walkStartedAt, flags.forcePedometerSteps);
   const stepCountRef = useRef(0);
   stepCountRef.current = stepCount;
 
@@ -593,8 +953,8 @@ export default function MapScreen() {
   // Convert to percentage of window height (rounded up to avoid cutting off by 1px).
   // Add an extra 2% padding when software nav buttons are present so the sheet
   // content clears the button bar with a comfortable margin.
-  const navAdjPctRaw = windowHeight > 0 ? Math.ceil((bottomNavHeight / windowHeight) * 100) : 0;
-  const navAdjPct = navAdjPctRaw > 0 ? navAdjPctRaw + 2 : 0;
+  const navAdjPctRaw = windowHeight > 0 ? Math.ceil((bottomNavHeight / windowHeight) * 100) -2 : 0;
+  const navAdjPct = navAdjPctRaw > 0 ? navAdjPctRaw +2 : 0;
 
   // Snap points per sheet.
   // Record idle: single point (prevents unwanted drag-snapping on the welcome card)
@@ -603,9 +963,9 @@ export default function MapScreen() {
   const snapPoints = useMemo(() => {
     const adj = (n: number) => `${n + navAdjPct}%`;
     if (activeSheet === 'library') return [adj(92)];
-    if (activeSheet === 'profile') return [adj(60)];
-    if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(43), adj(58)];
-    return [adj(58)]; // record idle, or closed default
+    if (activeSheet === 'profile') return [adj(92)];
+    if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(43), adj(62)];
+    return [adj(62)]; // record idle at same height as active index 3 — no jump on recording start
   }, [activeSheet, isActive, navAdjPct]);
 
   // Gorhom v5: the first snapToIndex call is silently dropped unless close() has
@@ -615,24 +975,12 @@ export default function MapScreen() {
     sheetRef.current?.close();
   }, []);
 
-  // Execute any pending snapToIndex AFTER snapPoints have been committed to
-  // BottomSheet as a prop. Child component effects (Gorhom's) run before parent
-  // effects in React, so by the time this fires, Gorhom's internal Reanimated
-  // shared value already reflects the new array — index 3 on a 4-element array
-  // is safe, whereas the old setTimeout(50ms) had no such guarantee.
-  useEffect(() => {
-    if (pendingSnapIndexRef.current === null) return;
-    const idx = pendingSnapIndexRef.current;
-    pendingSnapIndexRef.current = null;
-    sheetRef.current?.snapToIndex(idx);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [snapPoints]);
-
   // Close the sheet as soon as the walk starts completing so the review screen
   // is fully visible when it navigates in.
   useEffect(() => {
     if (state.phase === 'completing' || state.phase === 'completed') {
-      pendingSnapIndexRef.current = null; // cancel any pending snap
+      if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
+      ignoreNextCloseRef.current = true;
       sheetRef.current?.close();
       setActiveSheet(null);
     }
@@ -641,34 +989,50 @@ export default function MapScreen() {
   const prevIsActive = useRef(false);
   useEffect(() => {
     if (isActive && !prevIsActive.current) {
-      pendingSnapIndexRef.current = 0;
       setActiveSheet('record');
+      // When snap points grow from 1 item to 4 items, Gorhom remaps the current
+      // index (0 → 23%) causing the sheet to collapse. Calling snapToPosition
+      // with the absolute percentage is index-immune and fires immediately with
+      // no animation blip.
+      sheetRef.current?.snapToPosition(`${62 + navAdjPct}%`);
     }
     prevIsActive.current = isActive;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isActive]);
+  }, [isActive, navAdjPct]);
 
   // Listen for external open requests (e.g. recording indicator bar tap)
   useEffect(() => {
     return sheetEvents.subscribe((sheet) => {
-      const idx = sheet === 'record' && isActive ? 3 : 0;
-      pendingSnapIndexRef.current = idx;
+      const targetIdx = sheet === 'record' && isActive ? 3 : 0;
       setActiveSheet(sheet);
+      if (targetIdx > 0) {
+        // Sheet is closed — open to 0 first (always safe), then once settled
+        // fire the real target via pendingFinalSnapRef in onChange.
+        pendingFinalSnapRef.current = targetIdx;
+        scheduleSnap(0);
+      } else {
+        scheduleSnap(0);
+      }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
   const handleTabPress = (tab: SheetTab) => {
-    if (sheetTransitioningRef.current) return; // drop taps during animation
-    const idx = tab === 'record' && isActive ? 3 : 0;
+    const targetIdx = tab === 'record' && isActive ? 3 : 0;
     if (activeSheet === tab) {
-      sheetTransitioningRef.current = true;
+      if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
+      pendingFinalSnapRef.current = null;
+      ignoreNextCloseRef.current = true;
       setActiveSheet(null);
       sheetRef.current?.close();
     } else {
-      sheetTransitioningRef.current = true;
-      pendingSnapIndexRef.current = idx;
       setActiveSheet(tab);
+      if (targetIdx > 0) {
+        // Sheet is closed — open safely at 0, then snap to target once settled.
+        pendingFinalSnapRef.current = targetIdx;
+        scheduleSnap(0);
+      } else {
+        scheduleSnap(0);
+      }
     }
   };
 
@@ -692,16 +1056,19 @@ export default function MapScreen() {
         onTouchStart={() => setFollowLocation(false)}
       >
         {/* Camera: managed imperatively via cameraRef when follow mode is on.
-            Falls back to a static centre when no location is available yet. */}
+            defaultSettings is only applied on mount (not reactive), so updates
+            to currentLocation do NOT move the camera — all movement is driven
+            by explicit setCamera() calls in the watchPositionAsync callback,
+            which respect the followLocation toggle. */}
         {!isReviewActive && (
           <MapboxGL.Camera
             ref={cameraRef}
-            centerCoordinate={
-              currentLocation
+            defaultSettings={{
+              centerCoordinate: currentLocation
                 ? [currentLocation.longitude, currentLocation.latitude]
-                : [-0.1276, 51.5074]
-            }
-            zoomLevel={currentLocation ? 15 : 10}
+                : [-0.1276, 51.5074],
+              zoomLevel: currentLocation ? 15 : 10,
+            }}
             animationMode="none"
           />
         )}
@@ -719,58 +1086,15 @@ export default function MapScreen() {
         )}
       </MapboxGL.MapView>
 
-      {/* Map button strip — top-right, hidden when full-screen panels are open.
-          Rendered BEFORE BottomSheet intentionally: no zIndex means natural JSX
-          stacking order keeps the strip behind the sheet. */}
-      {!isReviewActive && perms.foreground === 'granted' && (activeSheet === null || activeSheet === 'record') && (
-        <View style={[styles.mapButtonStrip, { top: insets.top + Spacing.sm }]}>
-          {/* Follow-location toggle */}
-          <TouchableOpacity
-            style={[
-              styles.mapButton,
-              followLocation
-                ? { backgroundColor: colors.primary }
-                : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
-            ]}
-            onPress={() => {
-              const next = !followLocation;
-              setFollowLocation(next);
-              if (next && currentLocation) {
-                cameraRef.current?.setCamera({
-                  centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
-                  zoomLevel: 15,
-                  animationDuration: 400,
-                });
-              }
-            }}
-            activeOpacity={0.8}
-          >
-            <IconSymbol
-              name="location.fill"
-              size={20}
-              color={followLocation ? '#fff' : colors.textMuted}
-            />
-          </TouchableOpacity>
-
-          {/* Photo button — only while actively recording */}
-          {isActive && state.phase === 'recording' && (
-            <PhotoFab
-              walkId={state.walkId}
-              currentLocation={currentLocation}
-              style={styles.mapButton}
-            />
-          )}
-        </View>
-      )}
-
       {/* Recording status badge — top-centre map overlay */}
       {isRecording && (
-        <View style={styles.recordingOverlay} pointerEvents="none">
-          <RecordingStatusBadge status={state.phase} />
+        <View style={styles.recordingOverlay}>
+          <RecordingStatusBadge
+            status={state.phase}
+            onPress={() => sheetEvents.open('record')}
+          />
         </View>
       )}
-
-      {/* Photo FAB is now part of the map button strip above */}
 
       {/* Completing overlay */}
       {state.phase === 'completing' && (
@@ -810,15 +1134,30 @@ export default function MapScreen() {
         backgroundStyle={{ backgroundColor: colors.backgroundCard }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
-          // Check the lock BEFORE clearing it so we can distinguish a
-          // programmatic transition from a user-initiated drag-to-close.
-          const wasTransitioning = sheetTransitioningRef.current;
-          sheetTransitioningRef.current = false;
-          // Only clear activeSheet on a -1 that WE didn't initiate.
-          // During a programmatic tab switch Gorhom can fire intermediate
-          // onChange events (including -1) while re-anchoring to new snap
-          // points — honouring those would override the intended activeSheet.
-          if (index === -1 && !wasTransitioning) setActiveSheet(null);
+          if (index === -1) {
+            // Always cancel pending snap timers on close to prevent out-of-range crashes.
+            if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
+            pendingFinalSnapRef.current = null;
+            if (ignoreNextCloseRef.current) {
+              ignoreNextCloseRef.current = false;
+            } else {
+              // User dragged the sheet closed.
+              setActiveSheet(null);
+            }
+          } else if (pendingFinalSnapRef.current !== null) {
+            const finalIdx = pendingFinalSnapRef.current;
+            pendingFinalSnapRef.current = null;
+            // Cancel any pending fallback timer — we're handling it now.
+            if (pendingSnapRef.current !== null) {
+              clearTimeout(pendingSnapRef.current);
+              pendingSnapRef.current = null;
+            }
+            if (index !== finalIdx) {
+              // Sheet settled somewhere other than the target — correct it.
+              sheetRef.current?.snapToIndex(finalIdx);
+            }
+            // If index === finalIdx, sheet is already where we want it — done.
+          }
         }}
       >
         {activeSheet === 'record' && (
@@ -832,8 +1171,8 @@ export default function MapScreen() {
             displayAltitude={displayAltitude}
             displayAccuracy={displayAccuracy}
             pointCount={pointCount}
-            fgPointsWritten={fgPointsWritten}
             stepCount={stepCount}
+            stepSource={stepSource}
             currentLocation={currentLocation}
             start={start}
             pause={pause}
@@ -856,9 +1195,55 @@ export default function MapScreen() {
             insets={insets}
             allowHistoryDuringRecording={flags.allowHistoryDuringRecording}
             onToggleAllowHistoryDuringRecording={(v) => setFlag('allowHistoryDuringRecording', v)}
+            gpsAccuracyMultiplier={flags.gpsAccuracyMultiplier}
+            onGpsAccuracyMultiplierChange={(v) => setFlag('gpsAccuracyMultiplier', v)}
+            forcePedometerSteps={flags.forcePedometerSteps}
+            onToggleForcePedometerSteps={(v) => setFlag('forcePedometerSteps', v)}
           />
         )}
       </BottomSheet>
+
+      {/* Map button strip — top-right, rendered after BottomSheet so zIndex
+          places these above the sheet and touches always reach the buttons. */}
+      {!isReviewActive && perms.foreground === 'granted' && (activeSheet === null || activeSheet === 'record') && (
+        <View style={[styles.mapButtonStrip, { top: insets.top + Spacing.sm }]}>
+          {/* Follow-location toggle — always snaps to current position on press */}
+          <TouchableOpacity
+            style={[
+              styles.mapButton,
+              followLocation
+                ? { backgroundColor: colors.primary }
+                : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
+            ]}
+            onPress={() => {
+              setFollowLocation(true);
+              if (currentLocation) {
+                cameraRef.current?.setCamera({
+                  centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
+                  zoomLevel: 15,
+                  animationDuration: 400,
+                });
+              }
+            }}
+            activeOpacity={0.8}
+          >
+            <IconSymbol
+              name="location.fill"
+              size={20}
+              color={followLocation ? '#fff' : colors.textMuted}
+            />
+          </TouchableOpacity>
+
+          {/* Photo button — only while actively recording */}
+          {isActive && state.phase === 'recording' && (
+            <PhotoFab
+              walkId={state.walkId}
+              currentLocation={currentLocation}
+              style={styles.mapButton}
+            />
+          )}
+        </View>
+      )}
 
       {/* Custom tab bar — rendered last so it sits on top of the sheet handle */}
       <TabBar
@@ -893,7 +1278,8 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     alignItems: 'center',
     gap: Spacing.sm,
-    // No zIndex — render order (before BottomSheet) keeps this behind the sheet.
+    zIndex: 15,
+    elevation: 15,
   },
   mapButton: {
     width: 44,
@@ -1000,6 +1386,41 @@ const sheetStyles = StyleSheet.create({
   version: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.xs, opacity: 0.5, marginBottom: Spacing.sm },
 });
 
+const permStyles = StyleSheet.create({
+  pill: {
+    borderRadius: 10,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+    alignSelf: 'flex-start',
+    marginTop: 1,
+  },
+  pillText: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.xs,
+  },
+  grantRow: {
+    flexDirection: 'row',
+    marginTop: Spacing.xs,
+  },
+  grantText: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.xs,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    marginVertical: Spacing.sm,
+  },
+  hcBadge: {
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  hcBadgeText: {
+    fontFamily: Typography.fontMedium,
+    fontSize: 10,
+  },
+});
+
 const tabBarStyles = StyleSheet.create({
   bar: {
     position: 'absolute',
@@ -1017,7 +1438,15 @@ const tabBarStyles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pill: {
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 2,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: Radius.sm * 3,
+    minWidth: 72,
   },
   label: {
     fontSize: Typography.sizes.xs,

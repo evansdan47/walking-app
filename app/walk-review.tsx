@@ -254,7 +254,7 @@ export default function WalkReviewScreen() {
 
           {/* Elevation chart placeholder — Phase 4 */}
 
-          {stats && <WalkStatSummary stats={stats} />}
+          {stats && <WalkStatSummary stats={stats} photoCount={photos.length} />}
 
           <WalkActionBar onDelete={handleDelete} />
 

@@ -1,6 +1,7 @@
 import MapboxGL from '@rnmapbox/maps';
 import { useMemo } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { Defs, LinearGradient, Path, Stop, Svg } from 'react-native-svg';
 
 import { Colors } from '@/constants/theme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
@@ -25,9 +26,81 @@ function EndMarker() {
   return <View style={markerStyles.end} />;
 }
 
-/** Camera-icon dot — tappable photo pin. */
-function PhotoPin() {
-  return <View style={markerStyles.photo} />;
+// Cone geometry constants
+const DOT_R = 16;          // dot radius (px) — 32px dot diameter
+const CONE_LEN = 80;       // how far the cone extends from the dot centre
+const CONE_HALF_ANG = 25;  // half-angle of the cone in degrees
+
+/** SVG camera dot with a gradient heading cone radiating outward. */
+function PhotoConePin({ heading }: { heading: number | null }) {
+  // SVG canvas is square: (CONE_LEN + DOT_R) on each side, dot centred at (cx, cy).
+  // The cone tip starts at the dot centre and fans outward upward (north = 0°).
+  const size = (CONE_LEN + DOT_R) * 2;
+  const cx = size / 2;
+  const cy = size / 2;
+
+  // Cone arc points (tip at dot centre, fan opening upward before rotation)
+  const ang1 = (-90 - CONE_HALF_ANG) * (Math.PI / 180);
+  const ang2 = (-90 + CONE_HALF_ANG) * (Math.PI / 180);
+  const x1 = cx + CONE_LEN * Math.cos(ang1);
+  const y1 = cy + CONE_LEN * Math.sin(ang1);
+  const x2 = cx + CONE_LEN * Math.cos(ang2);
+  const y2 = cy + CONE_LEN * Math.sin(ang2);
+
+  // Gradient runs from dot centre (opaque) to the far edge (transparent)
+  const gradX2 = cx;
+  const gradY2 = cy - CONE_LEN;
+
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg
+        width={size}
+        height={size}
+        style={{ position: 'absolute' }}
+        viewBox={`0 0 ${size} ${size}`}
+      >
+        <Defs>
+          <LinearGradient id="cone-grad" x1={cx} y1={cy} x2={gradX2} y2={gradY2} gradientUnits="userSpaceOnUse">
+            <Stop offset="0" stopColor="#1565c0" stopOpacity="0.85" />
+            <Stop offset="1" stopColor="#1565c0" stopOpacity="0" />
+          </LinearGradient>
+        </Defs>
+        {heading !== null && (
+          <Path
+            d={`M ${cx} ${cy} L ${x1} ${y1} A ${CONE_LEN} ${CONE_LEN} 0 0 1 ${x2} ${y2} Z`}
+            fill="url(#cone-grad)"
+            transform={`rotate(${heading}, ${cx}, ${cy})`}
+          />
+        )}
+        {/* Dot */}
+        <Path
+          d={`M ${cx} ${cy} m -${DOT_R} 0 a ${DOT_R} ${DOT_R} 0 1 0 ${DOT_R * 2} 0 a ${DOT_R} ${DOT_R} 0 1 0 -${DOT_R * 2} 0`}
+          fill="#1565c0"
+        />
+        {/* White ring */}
+        <Path
+          d={`M ${cx} ${cy} m -${DOT_R} 0 a ${DOT_R} ${DOT_R} 0 1 0 ${DOT_R * 2} 0 a ${DOT_R} ${DOT_R} 0 1 0 -${DOT_R * 2} 0`}
+          fill="none"
+          stroke="#fff"
+          strokeWidth="2.5"
+        />
+        {/* Camera icon — lens */}
+        <Path
+          d={`M ${cx} ${cy} m -6 0 a 6 6 0 1 0 12 0 a 6 6 0 1 0 -12 0`}
+          fill="#fff"
+          opacity="0.9"
+        />
+        {/* Camera icon — body outline */}
+        <Path
+          d={`M ${cx - 10} ${cy - 5} h 20 a 2 2 0 0 1 2 2 v 9 a 2 2 0 0 1 -2 2 h -20 a 2 2 0 0 1 -2 -2 v -9 a 2 2 0 0 1 2 -2 z`}
+          fill="none"
+          stroke="#fff"
+          strokeWidth="1.8"
+          opacity="0.7"
+        />
+      </Svg>
+    </View>
+  );
 }
 
 /** Small dot used in the history map for each walk's start position. */
@@ -160,7 +233,7 @@ export function ReviewRouteLayer({ points, photos = [], onPhotoTap, mode = 'rout
           coordinate={[photo.longitude, photo.latitude]}
           onSelected={() => onPhotoTap?.(photo)}
         >
-          <PhotoPin />
+          <PhotoConePin heading={photo.heading} />
         </MapboxGL.PointAnnotation>
       ))}
     </>
@@ -189,11 +262,12 @@ const markerStyles = StyleSheet.create({
     borderColor: '#fff',
   },
   photo: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#1565c0', // blue
-    borderWidth: 2,
+    // kept for fallback reference but PhotoConePin uses SVG now
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#1565c0',
+    borderWidth: 2.5,
     borderColor: '#fff',
   },
   walkStart: {

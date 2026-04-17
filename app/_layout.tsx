@@ -9,6 +9,7 @@ import {
   PlusJakartaSans_700Bold,
   PlusJakartaSans_800ExtraBold,
 } from '@expo-google-fonts/plus-jakarta-sans';
+import { Ionicons } from '@expo/vector-icons';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import Mapbox from '@rnmapbox/maps';
 import { ConvexProviderWithAuth, ConvexReactClient } from 'convex/react';
@@ -69,6 +70,7 @@ export default function RootLayout() {
     Inter_700Bold,
     PlusJakartaSans_700Bold,
     PlusJakartaSans_800ExtraBold,
+    ...Ionicons.font,
   });
 
   useEffect(() => {

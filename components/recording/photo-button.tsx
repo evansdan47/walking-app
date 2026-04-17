@@ -1,9 +1,11 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { randomUUID } from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useRouter } from 'expo-router';
-import { useRef } from 'react';
+import * as Location from 'expo-location';
+import { useRef, useState } from 'react';
 import {
+    Modal,
+    SafeAreaView,
     StyleProp,
     StyleSheet,
     Text,
@@ -28,11 +30,13 @@ export function PhotoButton({ walkId, currentLocation, disabled = false }: Photo
   const colors = Colors[scheme];
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView | null>(null);
-  const router = useRouter();
 
   async function handleCapture() {
     if (!cameraRef.current) return;
-    const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+    const [photo, pos] = await Promise.all([
+      cameraRef.current.takePictureAsync({ quality: 0.7 }),
+      Location.getLastKnownPositionAsync(),
+    ]);
     if (!photo) return;
 
     const destUri = `${FileSystem.documentDirectory}photos/${randomUUID()}.jpg`;
@@ -48,11 +52,10 @@ export function PhotoButton({ walkId, currentLocation, disabled = false }: Photo
       timestamp: Date.now(),
       latitude: currentLocation?.latitude ?? 0,
       longitude: currentLocation?.longitude ?? 0,
+      heading: pos?.coords.heading ?? null,
       localUri: destUri,
       caption: null,
     });
-
-    router.back();
   }
 
   if (!permission?.granted) {
@@ -82,7 +85,10 @@ export function PhotoButton({ walkId, currentLocation, disabled = false }: Photo
   );
 }
 
-// Floating action button used when camera is not open
+// Floating action button used in the map button strip.
+// When permission is granted, tapping opens a fullscreen camera overlay;
+// the overlay closes automatically after a photo is captured or via the
+// close button.
 export function PhotoFab({
   walkId,
   currentLocation,
@@ -92,28 +98,88 @@ export function PhotoFab({
 }: PhotoButtonProps & { style?: StyleProp<ViewStyle>; iconColor?: string }) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
-  const [, requestPermission] = useCameraPermissions();
+  const [permission, requestPermission] = useCameraPermissions();
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const cameraRef = useRef<CameraView | null>(null);
+
+  async function handleCapture() {
+    if (!cameraRef.current) return;
+    const [photo, pos] = await Promise.all([
+      cameraRef.current.takePictureAsync({ quality: 0.7 }),
+      Location.getLastKnownPositionAsync(),
+    ]);
+    if (!photo) return;
+
+    const destUri = `${FileSystem.documentDirectory}photos/${randomUUID()}.jpg`;
+    await FileSystem.makeDirectoryAsync(
+      `${FileSystem.documentDirectory}photos/`,
+      { intermediates: true },
+    );
+    await FileSystem.moveAsync({ from: photo.uri, to: destUri });
+
+    insertPhoto({
+      id: randomUUID(),
+      walkId,
+      timestamp: Date.now(),
+      latitude: currentLocation?.latitude ?? 0,
+      longitude: currentLocation?.longitude ?? 0,
+      heading: pos?.coords.heading ?? null,
+      localUri: destUri,
+      caption: null,
+    });
+
+    setCameraOpen(false);
+  }
+
+  function handlePress() {
+    if (!permission?.granted) {
+      void requestPermission();
+    } else {
+      setCameraOpen(true);
+    }
+  }
 
   return (
-    <TouchableOpacity
-      style={[styles.fab, { backgroundColor: colors.secondary }, style, disabled && { opacity: 0.4 }]}
-      onPress={() => { void requestPermission(); }}
-      disabled={disabled}
-      activeOpacity={0.8}
-    >
-      <IconSymbol name="camera.fill" size={20} color={iconColor ?? '#fff'} />
-    </TouchableOpacity>
+    <>
+      <TouchableOpacity
+        style={[styles.fab, { backgroundColor: colors.secondary }, style, disabled && { opacity: 0.4 }]}
+        onPress={handlePress}
+        disabled={disabled}
+        activeOpacity={0.8}
+      >
+        <IconSymbol name="camera.fill" size={20} color={iconColor ?? '#fff'} />
+      </TouchableOpacity>
+
+      <Modal visible={cameraOpen} animationType="slide" statusBarTranslucent onRequestClose={() => setCameraOpen(false)}>
+        <SafeAreaView style={styles.cameraOverlay}>
+          <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+          {/* Close button */}
+          <TouchableOpacity
+            style={[styles.overlayClose, { backgroundColor: colors.backgroundCard }]}
+            onPress={() => setCameraOpen(false)}
+            activeOpacity={0.8}
+          >
+            <IconSymbol name="xmark" size={18} color={colors.text} />
+          </TouchableOpacity>
+          {/* Shutter button */}
+          <TouchableOpacity
+            style={styles.shutterButton}
+            onPress={() => { void handleCapture(); }}
+            activeOpacity={0.8}
+          >
+            <View style={styles.shutterInner} />
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   fab: {
-    position: 'absolute',
-    bottom: Spacing.xxl + Spacing.base,
-    right: Spacing.base,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
     elevation: 4,
@@ -142,5 +208,38 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: Typography.fontBold,
     fontSize: Typography.sizes.base,
+  },
+  cameraOverlay: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  overlayClose: {
+    position: 'absolute',
+    top: Spacing.xxl,
+    left: Spacing.base,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 5,
+  },
+  shutterButton: {
+    position: 'absolute',
+    bottom: Spacing.xxl,
+    alignSelf: 'center',
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    borderWidth: 4,
+    borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shutterInner: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#fff',
   },
 });

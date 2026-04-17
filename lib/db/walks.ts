@@ -10,6 +10,12 @@ export interface WalkStats {
   elevationLossMetres?: number | undefined;
   pointCount: number;
   stepCount?: number | undefined;
+  hcStepCount?: number | undefined;
+  // Health Connect enrichment — present only when HC data was read successfully
+  caloriesKcal?: number | undefined;
+  avgHeartRateBpm?: number | undefined;
+  maxHeartRateBpm?: number | undefined;
+  hcSynced?: boolean | undefined;
 }
 
 export interface Walk {

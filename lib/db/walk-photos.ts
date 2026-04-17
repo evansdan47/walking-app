@@ -6,6 +6,7 @@ export interface WalkPhoto {
   timestamp: number;
   latitude: number;
   longitude: number;
+  heading: number | null;
   localUri: string;
   caption: string | null;
   convexId: string | null;
@@ -18,6 +19,7 @@ type WalkPhotoRow = {
   timestamp: number;
   latitude: number;
   longitude: number;
+  heading: number | null;
   local_uri: string;
   caption: string | null;
   convex_id: string | null;
@@ -31,6 +33,7 @@ function rowToPhoto(row: WalkPhotoRow): WalkPhoto {
     timestamp: row.timestamp,
     latitude: row.latitude,
     longitude: row.longitude,
+    heading: row.heading,
     localUri: row.local_uri,
     caption: row.caption,
     convexId: row.convex_id,
@@ -42,13 +45,14 @@ export function insertPhoto(
   photo: Omit<WalkPhoto, 'convexId' | 'storageId'>,
 ): void {
   db.runSync(
-    `INSERT INTO walk_photos (id, walk_id, timestamp, latitude, longitude, local_uri, caption, convex_id, storage_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    `INSERT INTO walk_photos (id, walk_id, timestamp, latitude, longitude, heading, local_uri, caption, convex_id, storage_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
     photo.id,
     photo.walkId,
     photo.timestamp,
     photo.latitude,
     photo.longitude,
+    photo.heading ?? null,
     photo.localUri,
     photo.caption ?? null,
   );

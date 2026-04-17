@@ -63,3 +63,20 @@ db.execSync(`
 `);
 
 export { db };
+
+// Schema migrations — ALTER TABLE silently fails if the column already exists,
+// which is the correct behaviour for idempotent migrations.
+try { db.execSync(`ALTER TABLE walk_photos ADD COLUMN heading REAL`); } catch {}
+
+export function getKv(key: string): string | null {
+  const row = db.getFirstSync<{ value: string }>(`SELECT value FROM kv_store WHERE key = ?`, key);
+  return row?.value ?? null;
+}
+
+export function setKv(key: string, value: string): void {
+  db.runSync(
+    `INSERT INTO kv_store (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    key,
+    value,
+  );
+}

@@ -18,5 +18,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         // Using the env var avoids embedding the token in gradle.properties.
       },
     ],
+    'react-native-health-connect',
   ],
 } as ExpoConfig);

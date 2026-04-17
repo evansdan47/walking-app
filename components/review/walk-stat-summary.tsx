@@ -9,6 +9,7 @@ import type { WalkStats } from '@/lib/db/walks';
 
 interface WalkStatSummaryProps {
   stats: WalkStats | null;
+  photoCount?: number;
 }
 
 interface StatRow {
@@ -37,15 +38,31 @@ function buildRows(stats: WalkStats): StatRow[] {
     { label: 'Time moving',       value: formatDuration(stats.movingTimeSeconds) },
     { label: 'Time stopped',      value: formatDuration(stats.stoppedTimeSeconds) },
     { label: 'Waypoints stored',  value: String(stats.pointCount) },
-    { label: 'Steps counted',     value: stats.stepCount != null ? String(stats.stepCount) : '--' },
+    { label: 'Steps counted (D)', value: stats.stepCount != null ? String(stats.stepCount) : '--' },
+    ...(stats.hcStepCount != null
+      ? [{ label: 'Steps counted (HC)', value: String(stats.hcStepCount) }]
+      : []),
+    ...(stats.caloriesKcal != null
+      ? [{ label: 'Calories burned', value: `${Math.round(stats.caloriesKcal)} kcal` }]
+      : []),
+    ...(stats.avgHeartRateBpm != null
+      ? [{ label: 'Avg heart rate', value: `${Math.round(stats.avgHeartRateBpm)} bpm` }]
+      : []),
+    ...(stats.maxHeartRateBpm != null
+      ? [{ label: 'Max heart rate', value: `${Math.round(stats.maxHeartRateBpm)} bpm` }]
+      : []),
   ];
 }
 
-export function WalkStatSummary({ stats }: WalkStatSummaryProps) {
+export function WalkStatSummary({ stats, photoCount }: WalkStatSummaryProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
 
   const rows = stats ? buildRows(stats) : [];
+  const allRows: StatRow[] = [
+    ...rows,
+    ...(photoCount != null ? [{ label: 'Photos taken', value: String(photoCount) }] : []),
+  ];
 
   return (
     <View style={styles.container}>
@@ -61,7 +78,7 @@ export function WalkStatSummary({ stats }: WalkStatSummaryProps) {
 
       {/* Detail table */}
       <View style={[styles.table, { borderColor: colors.border }]}>
-        {rows.map((row, i) => (
+        {allRows.map((row, i) => (
           <View
             key={row.label}
             style={[
@@ -75,6 +92,11 @@ export function WalkStatSummary({ stats }: WalkStatSummaryProps) {
           </View>
         ))}
       </View>
+      {stats?.hcSynced && (
+        <View style={[styles.hcBadge, { backgroundColor: colors.successMuted, borderColor: colors.success }]}>
+          <Text style={[styles.hcBadgeText, { color: colors.success }]}>Synced to Health Connect</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -116,6 +138,17 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fontMedium,
     fontSize: Typography.sizes.sm,
     textAlign: 'right',
+  },
+  hcBadge: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 3,
+  },
+  hcBadgeText: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.xs,
   },
 });
 
