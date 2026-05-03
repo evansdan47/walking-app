@@ -61,3 +61,30 @@ export const getCurrentUser = query({
       .unique();
   },
 });
+
+/**
+ * Updates the current user's profile fields (name, weightKg).
+ */
+export const updateProfile = mutation({
+  args: {
+    name: v.optional(v.string()),
+    weightKg: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!existing) throw new Error("User not found");
+
+    await ctx.db.patch(existing._id, {
+      ...(args.name !== undefined ? { name: args.name } : {}),
+      ...(args.weightKg !== undefined ? { weightKg: args.weightKg } : {}),
+    });
+  },
+});

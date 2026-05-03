@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #455A64;
+
+  /* Terra Path Design System */
+  --color-brand: #E65100;
+  --color-brand-dark: #BF360C;
+  --color-brand-light: #FF6D00;
+  --color-active: #2E7D32;
+  --color-active-light: #43A047;
+  --color-slate: #455A64;
+  --color-slate-light: #607D8B;
+  --color-surface: #f3faff;
+  --color-surface-alt: #e8f5e9;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --color-brand: #E65100;
+  --color-brand-dark: #BF360C;
+  --color-brand-light: #FF6D00;
+  --color-active: #2E7D32;
+  --color-active-light: #43A047;
+  --color-slate: #455A64;
+  --color-slate-light: #607D8B;
+  --color-surface: #f3faff;
+  --color-surface-alt: #e8f5e9;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-inter), Inter, sans-serif;
+  user-select: none;
+}
+
+/* Re-enable selection inside any element that explicitly needs it */
+input, textarea, [contenteditable] {
+  user-select: text;
+}
+
+/* ── Mapbox popup — frosted glass ─────────────────────────────────────────── */
+.mapboxgl-popup-content {
+  background: rgba(255, 255, 255, 0.72) !important;
+  backdrop-filter: blur(12px) saturate(1.6) !important;
+  -webkit-backdrop-filter: blur(12px) saturate(1.6) !important;
+  border: 1px solid rgba(255, 255, 255, 0.5) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.14), 0 1px 4px rgba(0, 0, 0, 0.08) !important;
+  border-radius: 12px !important;
+  padding: 0 !important;
+  /* clip the backdrop-filter effect to the border-radius — without this
+     the blur bleeds outside the rounded corners as a wider opaque rectangle */
+  overflow: hidden !important;
+}
+
+/* Frosted tip on the popup arrow */
+.mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip {
+  border-top-color: rgba(255, 255, 255, 0.72) !important;
+}

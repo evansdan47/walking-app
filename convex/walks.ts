@@ -1,5 +1,5 @@
 import { v } from 'convex/values';
-import { mutation, MutationCtx } from './_generated/server';
+import { mutation, MutationCtx, query } from './_generated/server';
 
 const statsValidator = v.optional(
   v.object({
@@ -51,5 +51,31 @@ export const create = mutation({
       ...(args.endedAt !== undefined ? { endedAt: args.endedAt } : {}),
       ...(args.stats !== undefined ? { stats: args.stats } : {}),
     });
+  },
+});
+
+/**
+ * Returns all completed walks for the currently authenticated user,
+ * ordered newest-first. Used by the web app.
+ */
+export const listForCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+    return await ctx.db
+      .query('walks')
+      .withIndex('by_userId_and_status', (q) =>
+        q.eq('userId', user._id).eq('status', 'completed'),
+      )
+      .order('desc')
+      .collect();
   },
 });

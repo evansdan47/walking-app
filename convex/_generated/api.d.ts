@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as places from "../places.js";
+import type * as planned_routes from "../planned_routes.js";
 import type * as track_points from "../track_points.js";
 import type * as users from "../users.js";
 import type * as walk_photos from "../walk_photos.js";
@@ -20,6 +22,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  places: typeof places;
+  planned_routes: typeof planned_routes;
   track_points: typeof track_points;
   users: typeof users;
   walk_photos: typeof walk_photos;

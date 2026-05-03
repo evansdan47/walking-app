@@ -8,6 +8,7 @@ import type { Walk } from '@/lib/db/walks';
 interface HistoryWalkCardProps {
   walk: Walk;
   onPress: () => void;
+  synced?: boolean;
 }
 
 function formatDate(ts: number): string {
@@ -39,7 +40,7 @@ function formatDuration(totalSeconds: number): string {
   return `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
-export function HistoryWalkCard({ walk, onPress }: HistoryWalkCardProps) {
+export function HistoryWalkCard({ walk, onPress, synced }: HistoryWalkCardProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
 
@@ -92,7 +93,12 @@ export function HistoryWalkCard({ walk, onPress }: HistoryWalkCardProps) {
         )}
       </View>
 
-      <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+      <View style={styles.rightSection}>
+        {synced && (
+          <View style={[styles.syncDot, { backgroundColor: colors.success }]} />
+        )}
+        <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+      </View>
     </Pressable>
   );
 }
@@ -133,5 +139,15 @@ const styles = StyleSheet.create({
   pillText: {
     fontFamily: Typography.fontMedium,
     fontSize: Typography.sizes.xs,
+  },
+  rightSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  syncDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
   },
 });

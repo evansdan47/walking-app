@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
 import { Pedometer } from 'expo-sensors';
+import { useEffect, useRef, useState } from 'react';
 
 import { readStepsBetween } from '@/lib/health-connect/steps';
 

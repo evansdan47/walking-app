@@ -21,8 +21,8 @@ import { getPhotosForWalk } from '@/lib/db/walk-photos';
 import { deleteWalk, getWalk, updateWalkTitle } from '@/lib/db/walks';
 import { buildRoute } from '@/lib/review/build-route';
 import {
-  ROUTE_DISPLAY_MODES,
-  type RouteDisplayMode,
+    ROUTE_DISPLAY_MODES,
+    type RouteDisplayMode,
 } from '@/lib/review/route-display-modes';
 
 export default function WalkReviewScreen() {

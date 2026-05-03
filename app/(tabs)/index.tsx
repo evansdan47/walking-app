@@ -1,6 +1,6 @@
 import { useAuth, useUser } from '@clerk/expo';
 import BottomSheet, { BottomSheetFlatList, BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import { useMutation } from 'convex/react';
+import { useConvex, useMutation } from 'convex/react';
 import Constants from 'expo-constants';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
@@ -60,9 +60,12 @@ import MapboxGL from '@rnmapbox/maps';
 import { useCameraPermissions } from 'expo-camera';
 import { Pedometer } from 'expo-sensors';
 
+import { ensurePendingSyncJob } from '@/lib/db/sync-jobs';
 import { getPointsForWalk } from '@/lib/db/track-points';
 import { listCompletedWalks, type Walk } from '@/lib/db/walks';
 import { haversineMetres } from '@/lib/location/haversine';
+import { processPendingJobs } from '@/lib/sync/sync-manager';
+import { randomUUID } from 'expo-crypto';
 
 function useLiveStats(walkId: string | null) {
   const [distanceMetres, setDistanceMetres] = useState(0);
@@ -312,13 +315,30 @@ function HistorySheetContent({
   allowDuringRecording: boolean;
 }) {
   const router = useRouter();
+  const convex = useConvex();
   const { state } = useWalkSessionContext();
   const [walks, setWalks] = useState<Walk[]>([]);
+  const [syncing, setSyncing] = useState(false);
 
   // Load walks on mount (component only mounts while the sheet is open)
   useEffect(() => {
     setWalks(listCompletedWalks());
   }, []);
+
+  const unsynced = walks.filter((w) => w.convexId === null);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      for (const walk of unsynced) {
+        ensurePendingSyncJob(walk.id, walk.deviceId, randomUUID());
+      }
+      await processPendingJobs(convex);
+    } finally {
+      setWalks(listCompletedWalks());
+      setSyncing(false);
+    }
+  };
 
   const handleWalkPress = (walkId: string) => {
     if (!allowDuringRecording && (state.phase === 'recording' || state.phase === 'paused')) {
@@ -343,16 +363,31 @@ function HistorySheetContent({
       ListHeaderComponent={
         <View style={sheetStyles.historyHeader}>
           <Text style={[sheetStyles.historyCount, { color: colors.textMuted }]}>{walkLabel}</Text>
-          {walkCount > 0 && (
-            <TouchableOpacity onPress={() => router.push('/(tabs)/library')}>
-              <Text style={[sheetStyles.viewOnMap, { color: colors.primary }]}>View on map</Text>
-            </TouchableOpacity>
-          )}
+          <View style={{ flexDirection: 'row', gap: Spacing.base, alignItems: 'center' }}>
+            {unsynced.length > 0 && (
+              <TouchableOpacity onPress={() => void handleSync()} disabled={syncing}>
+                {syncing ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : (
+                  <Text style={[sheetStyles.viewOnMap, { color: colors.primary }]}>Sync walks</Text>
+                )}
+              </TouchableOpacity>
+            )}
+            {walkCount > 0 && (
+              <TouchableOpacity onPress={() => router.push('/(tabs)/library')}>
+                <Text style={[sheetStyles.viewOnMap, { color: colors.primary }]}>View on map</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
       }
       ListEmptyComponent={<EmptyWalkHistory />}
       renderItem={({ item }: { item: Walk }) => (
-        <HistoryWalkCard walk={item} onPress={() => handleWalkPress(item.id)} />
+        <HistoryWalkCard
+          walk={item}
+          synced={item.convexId !== null}
+          onPress={() => handleWalkPress(item.id)}
+        />
       )}
     />
   );

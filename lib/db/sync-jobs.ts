@@ -63,3 +63,24 @@ export function updateJobStatus(
     id,
   );
 }
+
+/**
+ * Ensures a pending sync job exists for the given walk.
+ * If there is already a pending or in-progress job, does nothing.
+ * Pass a pre-generated UUID as `newId`.
+ */
+export function ensurePendingSyncJob(walkId: string, deviceId: string, newId: string): void {
+  const existing = db.getFirstSync<{ id: string }>(
+    `SELECT id FROM sync_jobs WHERE walk_id = ? AND status IN ('pending', 'in_progress') LIMIT 1`,
+    walkId,
+  );
+  if (!existing) {
+    db.runSync(
+      `INSERT INTO sync_jobs (id, walk_id, device_id, status, attempted_at, error_message)
+       VALUES (?, ?, ?, 'pending', NULL, NULL)`,
+      newId,
+      walkId,
+      deviceId,
+    );
+  }
+}
