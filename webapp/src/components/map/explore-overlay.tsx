@@ -9,6 +9,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Marker, Popup, Source, useMap } from 'react-map-gl/mapbox';
 import { usePace } from '@/components/pace-context';
 import { ACTIVITY_PROFILES, type ActivityPace } from '@/lib/activity-pace';
+import { usePanelWidth, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH, usePanelHeight, PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -1028,7 +1029,7 @@ interface ExploreElevProfileProps {
   onHoverIndex?: (idx: number | null) => void;
 }
 
-function ExploreElevationProfile({ points, elevations, onHoverIndex }: ExploreElevProfileProps) {
+export function ExploreElevationProfile({ points, elevations, onHoverIndex }: ExploreElevProfileProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverNorm, setHoverNorm] = useState<number | null>(null);
 
@@ -1334,16 +1335,119 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
   const [liked, setLiked] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
 
+  // ── Resize ──────────────────────────────────────────────────────────────
+  const [width, onWidthChange] = usePanelWidth();
+  const [panelHeight, setPanelHeight] = usePanelHeight();
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
+  );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  // Width resize (desktop)
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(0);
+
+  const onResizePointerDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      isDragging.current = true;
+      dragStartX.current = e.clientX;
+      dragStartWidth.current = width;
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [width],
+  );
+
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!isDragging.current) return;
+      const next = dragStartWidth.current + (e.clientX - dragStartX.current);
+      onWidthChange(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, next)));
+    }
+    function onUp() {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, [onWidthChange]);
+
+  // Height resize (mobile)
+  const isHeightDragging = useRef(false);
+  const heightDragStartY = useRef(0);
+  const heightDragStartHeight = useRef(0);
+
+  const onTopGripperDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      isHeightDragging.current = true;
+      heightDragStartY.current = e.clientY;
+      heightDragStartHeight.current = panelHeight;
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [panelHeight],
+  );
+
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!isHeightDragging.current) return;
+      const next = heightDragStartHeight.current - (e.clientY - heightDragStartY.current);
+      setPanelHeight(Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, next)));
+    }
+    function onUp() {
+      if (!isHeightDragging.current) return;
+      isHeightDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, [setPanelHeight]);
+
+  // ────────────────────────────────────────────────────────────────────────
   const DESC_LIMIT = 160;
   const description = route.description ?? 'A scenic walk through varied terrain with great views. Suitable for walkers of all abilities with some moderate sections along the way.';
   const isDescLong = description.length > DESC_LIMIT;
 
   return (
-    <div className="absolute left-4 w-md z-10 pointer-events-auto" style={{ top: 70, height: 'calc(100vh - 82px)' }}>
-      <div className="bg-white rounded-xl shadow-xl overflow-hidden flex flex-col h-full">
+    <div
+      className={isMobile
+        ? 'absolute bottom-0 left-0 right-0 z-10 pointer-events-auto bg-white rounded-t-xl shadow-xl overflow-hidden flex flex-col'
+        : 'absolute left-4 z-10 pointer-events-auto bg-white rounded-xl shadow-xl overflow-hidden flex flex-col'
+      }
+      style={isMobile ? { height: panelHeight } : { top: 68, bottom: 16, width }}
+    >
+      {/* Top resize handle — mobile only */}
+      {isMobile && (
+        <div
+          onPointerDown={onTopGripperDown}
+          className="shrink-0 h-5 flex justify-center items-center cursor-ns-resize"
+          aria-hidden="true"
+          title="Drag to resize"
+        >
+          <div className="w-10 h-1 rounded-full bg-gray-300" />
+        </div>
+      )}
 
-        {/* ── Header ── */}
-        <div className="flex items-center gap-2 px-3 pt-4 pb-3 shrink-0">
+      {/* ── Header ── */}
+      <div className="flex items-center gap-2 px-3 pt-4 pb-3 shrink-0">
           <button
             onClick={onClose}
             className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 transition-colors"
@@ -1495,7 +1599,23 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
             </button>
           </div>
         </div>
-      </div>
+
+      {/* Resize handle — right edge (desktop only) */}
+      {!isMobile && (
+        <div
+          onPointerDown={onResizePointerDown}
+          className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-ew-resize group rounded-r-xl"
+          aria-hidden="true"
+          title="Drag to resize"
+        >
+          <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="w-1 h-1 rounded-full bg-gray-400" />
+            ))}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

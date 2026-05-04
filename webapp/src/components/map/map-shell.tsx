@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CircleLayer, LineLayer, SymbolLayer } from 'react-map-gl/mapbox';
 import Map, { Layer, Marker, Popup, Source, type MapLayerMouseEvent, type MapRef } from 'react-map-gl/mapbox';
 import { ExploreMapLayers, ExploreOverlay, type EnrichedRoute } from './explore-overlay';
+import { ActivityOverlay } from './activity-overlay';
 import { PlannerOverlay, SEGMENT_COLOURS, bearingDeg, densifyPoints, haversineKm, toGeoJSON, toMultiGeoJSON, type ChartRange, type Leg, type Point } from './planner-overlay';
 import { PLACE_TYPE_META } from './poi-add-form';
 import type { Id } from '@convex/_generated/dataModel';
@@ -143,7 +144,7 @@ async function fetchSnappedRoute(
 
 // â”€â”€ MapShell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-type Mode = 'explore' | 'planner';
+type Mode = 'explore' | 'planner' | 'activity';
 
 /**
  * The single-page map shell. One Map instance, mode driven by ?mode= URL param.
@@ -178,6 +179,11 @@ export function MapShell() {
   const [activeSegmentId, setActiveSegmentId] = useState('s1');
   const [editingRoute, setEditingRoute] = useState<EnrichedRoute | null>(null);
   const [snapToPath, setSnapToPath] = useState(true);
+
+  // ── Activity mode state ──────────────────────────────────────────────────
+  /** Points of the currently previewed / selected GPS track (from trackPoints). */
+  const [activityTrack, setActivityTrack] = useState<Point[]>([]);
+  const [activityElevHoverIdx, setActivityElevHoverIdx] = useState<number | null>(null);
   const [turnaroundIdx, setTurnaroundIdx] = useState<number | null>(null);
   const [isPending, setIsPending] = useState(false);
 
@@ -378,6 +384,14 @@ export function MapShell() {
     };
   }, [allPoints, setDisplay]); // allPoints identity changes on every commit
 
+  // Clear activity track when leaving activity mode
+  useEffect(() => {
+    if (mode !== 'activity') {
+      setActivityTrack([]);
+      setActivityElevHoverIdx(null);
+    }
+  }, [mode]);
+
   // Sample terrain elevation for every route change.
   // Uses a coordinate cache so points that scroll off-screen keep their elevation.
   // Only newly-seen coordinates are queried â€” they are always in the current viewport
@@ -452,6 +466,7 @@ export function MapShell() {
     mapInstance.scrollZoom.enable();
     mapInstance.keyboard.enable();
     mapInstance.touchZoomRotate.enable();
+    mapInstance.setPadding({ left: 0, top: 0, right: 0, bottom: 0 });
     const saved = savedCameraRef.current;
     if (saved) {
       mapInstance.flyTo({ center: saved.center, zoom: saved.zoom, pitch: saved.pitch, bearing: saved.bearing, duration: 2500 });
@@ -543,6 +558,7 @@ export function MapShell() {
     mapInstance.dragRotate.enable();
     mapInstance.keyboard.enable();
     mapInstance.touchZoomRotate.enable();
+    mapInstance.setPadding({ left: 0, top: 0, right: 0, bottom: 0 });
     const saved = walkSavedCameraRef.current;
     if (saved) mapInstance.flyTo({ center: saved.center, zoom: saved.zoom, pitch: saved.pitch, bearing: saved.bearing, duration: 2500 });
   }, []);
@@ -901,6 +917,16 @@ export function MapShell() {
       });
     });
   }, [allPoints, endWalkPreview]);
+
+  /** Called by ActivityOverlay to fit the map to a GPS track's bounding box. */
+  const handleFitBounds = useCallback((bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number }) => {
+    const map = mapRef.current;
+    if (!map) return;
+    map.fitBounds(
+      [[bounds.minLng, bounds.minLat], [bounds.maxLng, bounds.maxLat]],
+      { padding: 60, duration: 900 },
+    );
+  }, []);
 
   /** Load a route into the planner for editing, then navigate to planner mode. */
   const handleEditRoute = useCallback((route: EnrichedRoute) => {
@@ -1513,6 +1539,14 @@ export function MapShell() {
           </Source>
         )}
 
+        {/* ── Activity GPS track ── */}
+        {mode === 'activity' && activityTrack.length > 1 && (
+          <Source id="activity-track" type="geojson" data={toGeoJSON(activityTrack)}>
+            <Layer {...routeOutlineLayer} />
+            <Layer {...routeLayer} />
+          </Source>
+        )}
+
         {/* Explore mode: route pins + clusters */}
         {mode === 'explore' && !isWalkPreview && (
           <ExploreMapLayers
@@ -1672,6 +1706,16 @@ export function MapShell() {
             <RangeDistLabel distKm={chartRange.distKm} />
           </Marker>
         )}
+        {/* Activity mode: elevation chart hover marker */}
+        {mode === 'activity' && activityElevHoverIdx !== null && activityTrack[activityElevHoverIdx] && (
+          <Marker
+            longitude={activityTrack[activityElevHoverIdx].lng}
+            latitude={activityTrack[activityElevHoverIdx].lat}
+            anchor="bottom"
+          >
+            <WalkerMarker />
+          </Marker>
+        )}
       </Map>
 
       {/* â”€â”€ Mode overlays (UI panels on top of map) â”€â”€ */}
@@ -1687,6 +1731,13 @@ export function MapShell() {
             onElevHoverIdx={setExploreElevHoverIdx}
             onFilteredIdsChange={setExploreFilteredIds}
             onEditRoute={handleEditRoute}
+          />
+        )}
+        {mode === 'activity' && !isFlyby && !isWalkPreview && (
+          <ActivityOverlay
+            onTrackChange={setActivityTrack}
+            onFitBounds={handleFitBounds}
+            onElevHoverIdx={setActivityElevHoverIdx}
           />
         )}
         {mode === 'planner' && !isFlyby && !isWalkPreview && (
@@ -1724,6 +1775,8 @@ export function MapShell() {
             initialRouteDescription={editingRoute?.description}
             onRouteSaved={handleRouteSaved}
             onPendingPoisChange={setPoiMarkers}
+            onWalkPreview={displayPoints.length > 2 ? () => handleWalkPreview() : undefined}
+            onFlyby={displayPoints.length > 2 ? handlePreviewFlyby : undefined}
           />
         )}
         {isFlyby && (
@@ -1764,25 +1817,7 @@ export function MapShell() {
           </div>
         )}
 
-        {/* ── Preview buttons overlay ── shown in planner mode once route has 3+ points */}
-        {mode === 'planner' && !isFlyby && !isWalkPreview && displayPoints.length > 2 && (
-          <div className="absolute bottom-6 right-4 z-40 pointer-events-auto flex flex-col gap-2 items-end">
-            <button
-              onClick={() => handleWalkPreview()}
-              className="flex items-center gap-1.5 rounded-full bg-gray-900/80 hover:bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition-colors"
-            >
-              <svg viewBox="0 0 16 16" className="w-3 h-3 fill-current" aria-hidden="true"><polygon points="3,2 13,8 3,14"/></svg>
-              Walk preview
-            </button>
-            <button
-              onClick={handlePreviewFlyby}
-              className="flex items-center gap-1.5 rounded-full bg-gray-900/80 hover:bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur-sm transition-colors"
-            >
-              <svg viewBox="0 0 16 16" className="w-3 h-3 fill-current" aria-hidden="true"><polygon points="3,2 13,8 3,14"/></svg>
-              Flyby overview
-            </button>
-          </div>
-        )}
+        {/* ── Preview buttons overlay ── removed: now inside toolbar */}
 
       </div>
     </div>

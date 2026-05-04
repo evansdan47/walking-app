@@ -9,6 +9,7 @@ import { useMutation, useQuery } from 'convex/react';
 import type { Id } from '@convex/_generated/dataModel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AddPoiForm, PLACE_TYPE_META, type PendingPoi, type PlaceType } from './poi-add-form';
+import { usePanelWidth, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -741,9 +742,10 @@ function PlannerSidebar({
   onSetActiveLeg,
   routeName,
   onRouteNameChange,
-  panelTop,
   pendingPois,
   onRemovePoi,
+  poiMode,
+  onTogglePoiMode,
 }: {
   legs: Leg[];
   elevationPoints: Point[];
@@ -762,11 +764,10 @@ function PlannerSidebar({
   onSetActiveLeg: (id: string) => void;
   routeName: string;
   onRouteNameChange: (name: string) => void;
-  routeName: string;
-  onRouteNameChange: (name: string) => void;
-  panelTop: number;
   pendingPois: PendingPoi[];
   onRemovePoi: (index: number) => void;
+  poiMode: boolean;
+  onTogglePoiMode: () => void;
 }) {
   const [expandedWpts, setExpandedWpts] = useState<Set<number>>(new Set());
   const { pace: selectedActivity } = usePace();
@@ -1286,10 +1287,22 @@ function PlannerSidebar({
         );
       })()}
 
-      {/* ── Route POIs ── */}
-      {pendingPois.length > 0 && (
-        <div className="mt-3 border-t border-gray-100 pt-3">
-          <p className="text-[10px] text-slate-light uppercase tracking-wider mb-2">Route POIs</p>
+      {/* ── Route points of interest ── */}
+      <div className="mt-3 border-t border-gray-100 pt-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[10px] text-slate-light uppercase tracking-wider">Route points of interest</p>
+          <button
+            onClick={onTogglePoiMode}
+            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border transition-colors ${
+              poiMode
+                ? 'bg-active text-white border-active'
+                : 'bg-white text-slate border-gray-200 hover:border-active hover:text-active'
+            }`}
+          >
+            + POI
+          </button>
+        </div>
+        {pendingPois.length > 0 && (
           <div className="space-y-1.5">
             {pendingPois.map((poi, idx) => {
               const meta = PLACE_TYPE_META[poi.type];
@@ -1328,8 +1341,8 @@ function PlannerSidebar({
               );
             })}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
     </>
   );
@@ -1371,11 +1384,8 @@ function PlannerSidebar({
             </span>
           )
         }
-        collapsedTooltip="Custom route info"
-        collapsedIcon={<RouteIcon />}
         width={width}
         onWidthChange={onWidthChange}
-        panelTop={panelTop}
         alwaysShownContent={alwaysShownContent}
         collapsibleContent={collapsibleContent}
       />
@@ -1438,8 +1448,8 @@ function MapToolbar({
   isPending,
   sidebarWidth,
   containerRef,
-  poiMode,
-  onTogglePoiMode,
+  onWalkPreview,
+  onFlyby,
 }: {
   snapToPath: boolean;
   onToggleSnap: () => void;
@@ -1456,16 +1466,26 @@ function MapToolbar({
   isPending: boolean;
   sidebarWidth: number;
   containerRef?: React.RefObject<HTMLDivElement | null>;
-  poiMode: boolean;
-  onTogglePoiMode: () => void;
+  onWalkPreview?: () => void;
+  onFlyby?: () => void;
 }) {
-  // The toolbar spans from the sidebar's right edge to the window's right edge
-  // and centres its content within that space, so it is always fully visible.
-  const mapAreaLeft = sidebarWidth + 16 + 8; // sidebar left-4 + width + gap
+  const [previewOpen, setPreviewOpen] = useState(false);
+  // The toolbar is clamped so its left edge never overlaps the sidebar (desktop).
+  // In mobile mode the sidebar is docked to the bottom, so the full width is free.
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
+  );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+  const mapAreaLeft = isMobile ? 0 : 16 + sidebarWidth + 8;
   return (
     <div
       ref={containerRef}
-      className="absolute top-18 inset-x-0 z-10 flex justify-center items-start pointer-events-none"
+      className="absolute top-17 right-0 z-10 flex justify-center items-start pointer-events-none"
+      style={{ left: mapAreaLeft }}
     >
       <div className="bg-white rounded-xl shadow-lg flex items-center pointer-events-auto">
         {/* Snap to paths toggle */}
@@ -1485,17 +1505,6 @@ function MapToolbar({
             }`} />
           </button>
         </div>
-
-        <ToolbarDivider />
-
-        {/* Add POI */}
-        <ToolbarBtn
-          onClick={onTogglePoiMode}
-          title="Add point of interest"
-          className={poiMode ? 'text-active font-semibold' : ''}
-        >
-          <span className="text-xs font-semibold whitespace-nowrap">+ POI</span>
-        </ToolbarBtn>
 
         <ToolbarDivider />
 
@@ -1530,6 +1539,47 @@ function MapToolbar({
         <ToolbarBtn onClick={onTrackBack} disabled={!hasPoints || isPending} title="Track back — retrace route to start">
           <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
         </ToolbarBtn>
+
+        <ToolbarDivider />
+
+        {/* Previews dropdown */}
+        {(onWalkPreview || onFlyby) && (
+          <div className="relative">
+            <ToolbarBtn
+              onClick={() => setPreviewOpen((v) => !v)}
+              disabled={!hasPoints || isPending}
+              title="Preview options"
+              className="flex items-center gap-1.5"
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span className="text-xs font-semibold">Previews</span>
+            </ToolbarBtn>
+            {previewOpen && (
+              <>
+                {/* Click-outside backdrop */}
+                <div className="fixed inset-0 z-20" onClick={() => setPreviewOpen(false)} />
+                <div className="absolute top-full left-0 mt-1 z-30 bg-white rounded-xl shadow-xl border border-gray-100 min-w-45 py-1 pointer-events-auto">
+                  {onWalkPreview && (
+                    <button
+                      onClick={() => { setPreviewOpen(false); onWalkPreview(); }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      Walk visualizer
+                    </button>
+                  )}
+                  {onFlyby && (
+                    <button
+                      onClick={() => { setPreviewOpen(false); onFlyby(); }}
+                      className="w-full text-left px-4 py-2.5 text-xs text-gray-700 hover:bg-gray-50 transition-colors"
+                    >
+                      Checkpoint flyby
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         <ToolbarDivider />
 
@@ -1615,6 +1665,10 @@ interface PlannerOverlayProps {
   onRouteSaved?: (id: Id<'plannedRoutes'>) => void;
   /** Called whenever the pending-POI list changes, so map-shell can render markers. */
   onPendingPoisChange?: (pois: PendingPoi[]) => void;
+  /** Start the walk visualizer preview. */
+  onWalkPreview?: () => void;
+  /** Start the checkpoint flyby preview. */
+  onFlyby?: () => void;
 }
 
 export function PlannerOverlay({
@@ -1651,13 +1705,13 @@ export function PlannerOverlay({
   initialRouteDescription,
   onRouteSaved,
   onPendingPoisChange,
+  onWalkPreview,
+  onFlyby,
 }: PlannerOverlayProps) {
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
   const [routeName, setRouteName] = useState(initialRouteName ?? '');
-  const [sidebarWidth, setSidebarWidth] = useState<number>(() =>
-    clampWidth(typeof window !== 'undefined' ? window.innerWidth * DEFAULT_WIDTH_RATIO : 340)
-  );
+  const [sidebarWidth, setSidebarWidth] = usePanelWidth();
 
   // Pending POIs: held locally, saved atomically with the route.
   const [pendingPois, setPendingPois] = useState<PendingPoi[]>([]);
@@ -1800,25 +1854,7 @@ export function PlannerOverlay({
   }, []);
 
   const handleWidthChange = useCallback((w: number) => setSidebarWidth(w), []);
-
-  // Measure the toolbar's bottom edge so the sidebar can dynamically clear it.
   const toolbarWrapperRef = useRef<HTMLDivElement>(null);
-  const PANEL_GAP = 8; // px gap between toolbar bottom and panel top
-  const [panelTop, setPanelTop] = useState(128);
-  useEffect(() => {
-    const el = toolbarWrapperRef.current;
-    if (!el) return;
-    const update = () => {
-      const rect = el.getBoundingClientRect();
-      setPanelTop(rect.bottom + PANEL_GAP);
-    };
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    // Also update on window resize in case the toolbar wraps
-    window.addEventListener('resize', update);
-    return () => { ro.disconnect(); window.removeEventListener('resize', update); };
-  }, []);
 
   const totalDistKm = legs.reduce((s, leg) => s + totalKm(leg.points), 0);
   const elevGainM = elevations.length >= 2
@@ -1838,7 +1874,6 @@ export function PlannerOverlay({
     <>
       {/* ── Left sidebar ── */}
       <PlannerSidebar
-        panelTop={panelTop}
         legs={legs}
         elevationPoints={elevationPoints}
         elevations={elevations}
@@ -1858,6 +1893,8 @@ export function PlannerOverlay({
         onRouteNameChange={setRouteName}
         pendingPois={pendingPois}
         onRemovePoi={handleRemovePoi}
+        poiMode={poiMode}
+        onTogglePoiMode={onTogglePoiMode}
       />
 
       {/* ── Instruction toast ── */}
@@ -1880,8 +1917,8 @@ export function PlannerOverlay({
         hasPoints={allPoints.length >= 1}
         isPending={isPending}
         sidebarWidth={sidebarWidth}
-        poiMode={poiMode}
-        onTogglePoiMode={onTogglePoiMode}
+        onWalkPreview={onWalkPreview}
+        onFlyby={onFlyby}
       />
 
       {/* ── POI mode banner (shown when waiting for map click, no form yet) ── */}

@@ -5,7 +5,7 @@ import type { MouseEvent } from 'react';
 
 const NAV_LINKS = [
   { mode: 'explore', label: 'Explore' },
-  { mode: 'walks', label: 'My Walks' },
+  { mode: 'activity', label: 'Activity' },
   { mode: 'planner', label: 'Planner' },
   { mode: 'community', label: 'Community' },
 ];

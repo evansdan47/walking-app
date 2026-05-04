@@ -99,9 +99,7 @@ export const listForCurrentUser = query({
     if (!user) return [];
     return await ctx.db
       .query('walks')
-      .withIndex('by_userId_and_status', (q) =>
-        q.eq('userId', user._id).eq('status', 'completed'),
-      )
+      .withIndex('by_userId', (q) => q.eq('userId', user._id))
       .order('desc')
       .collect();
   },

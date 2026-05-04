@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { usePanelHeight, PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -9,33 +10,25 @@ interface CollapsibleSidePanelProps {
   title: string;
   /** Optional custom title node — replaces the default <h2> when provided. */
   titleContent?: React.ReactNode;
-  /** Tooltip text on the circular collapsed button, e.g. "Custom route info". */
-  collapsedTooltip: string;
-  /** Icon rendered inside the circular collapsed button. */
-  collapsedIcon: React.ReactNode;
+  /** If provided, a back (←) button is shown in the header. */
+  onBack?: () => void;
   /** Current controlled width in px — owned by the parent. */
   width: number;
   /** Called while the user drags the resize handle. */
   onWidthChange: (w: number) => void;
-  /** Minimum resize width (px). Default 260. */
+  /** Minimum resize width (px). Default 300. */
   minWidth?: number;
-  /** Maximum resize width (px). Default 600. */
+  /** Maximum resize width (px). Default 620. */
   maxWidth?: number;
-  /** Distance from the top of the viewport (px). Dynamically avoids toolbar overlap. */
+  /** Distance from the top of the viewport (px). Defaults to 68 — just below the nav header. */
   panelTop?: number;
-  /**
-   * Content always visible when the panel is open (below the header).
-   * Displayed even when the panel is rolled up.
-   */
-  alwaysShownContent: React.ReactNode;
-  /**
-   * Content hidden when the panel is rolled up.
-   * Rendered inside an overflow-y-auto scrollable area.
-   */
+  /** Non-scrolling section shown immediately below the header. */
+  alwaysShownContent?: React.ReactNode;
+  /** Main scrollable content area. */
   collapsibleContent: React.ReactNode;
-  /** Optional footer, always visible when panel is open. */
+  /** Optional footer pinned to the bottom of the panel. */
   footer?: React.ReactNode;
-  /** Optional content rendered below the title, still inside the header border. */
+  /** Optional extra content rendered inside the header, below the title row. */
   headerExtra?: React.ReactNode;
 }
 
@@ -44,23 +37,28 @@ interface CollapsibleSidePanelProps {
 export function CollapsibleSidePanel({
   title,
   titleContent,
-  collapsedTooltip,
-  collapsedIcon,
+  onBack,
   width,
   onWidthChange,
-  minWidth = 260,
-  maxWidth = 600,
-  panelTop,
+  minWidth = 300,
+  maxWidth = 620,
+  panelTop = 68,
   alwaysShownContent,
   collapsibleContent,
   footer,
   headerExtra,
 }: CollapsibleSidePanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
-  const [rolledUp, setRolledUp] = useState(false);
+  // ── Mobile detection ────────────────────────────────────────────────────
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
+  );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
 
-  // ── Drag-resize ────────────────────────────────────────────────────────────
-
+  // ── Desktop drag-resize (right edge → width) ────────────────────────────
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
@@ -97,112 +95,116 @@ export function CollapsibleSidePanel({
     };
   }, [onWidthChange, minWidth, maxWidth]);
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  // ── Mobile drag-resize (top edge → height) ──────────────────────────────
+  const [panelHeight, setPanelHeight] = usePanelHeight();
+  const isHeightDragging = useRef(false);
+  const heightDragStartY = useRef(0);
+  const heightDragStartHeight = useRef(0);
 
-  return (
-    // Outer positioning column — always reserves the left slot at the current width.
-    <div
-      className="absolute left-4 bottom-4 z-10 pointer-events-none"
-      style={{ width, top: panelTop !== undefined ? panelTop : 128, transition: 'top 200ms ease' }}
-    >
-      {/* ── Sliding panel ── */}
-      <div
-        className="absolute top-0 left-0 right-0 flex flex-col bg-white/97 backdrop-blur-sm rounded-2xl shadow-lg overflow-hidden pointer-events-auto"
-        style={{
-          transform: collapsed ? 'translateX(calc(-100% - 1.5rem))' : 'translateX(0)',
-          transition: 'transform 300ms cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-      >
-        {/* Header — always visible */}
-        <div className="shrink-0 px-5 pt-4 pb-3 border-b border-gray-100">
-          <div className="flex items-center gap-2">
-            {/* Collapse-to-side button */}
-            <button
-              onClick={() => setCollapsed(true)}
-              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full border border-gray-200 hover:bg-gray-50 transition-colors text-slate"
-              title={`Hide ${title}`}
-              aria-label={`Collapse ${title} panel`}
-            >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                <path d="M19 12H5M12 5l-7 7 7 7" />
-              </svg>
-            </button>
+  const onTopGripperDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      isHeightDragging.current = true;
+      heightDragStartY.current = e.clientY;
+      heightDragStartHeight.current = panelHeight;
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [panelHeight],
+  );
 
-            {/* Title — centred between the two buttons */}
-            <h2 className="flex-1 min-w-0 text-base font-bold text-slate">{titleContent ?? title}</h2>
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!isHeightDragging.current) return;
+      const next = heightDragStartHeight.current - (e.clientY - heightDragStartY.current);
+      setPanelHeight(Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, next)));
+    }
+    function onUp() {
+      if (!isHeightDragging.current) return;
+      isHeightDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, [setPanelHeight]);
 
-            {/* Roll-up / roll-down toggle */}
-            <button
-              onClick={() => setRolledUp((v) => !v)}
-              className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full border border-gray-200 hover:bg-gray-50 transition-colors text-slate"
-              title={rolledUp ? `Expand ${title}` : `Roll up ${title}`}
-              aria-label={rolledUp ? 'Expand panel' : 'Roll up panel'}
-            >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                {/* ↑ when expanded (click to roll up), ↓ when rolled up (click to expand) */}
-                <path d={rolledUp ? 'M6 9l6 6 6-6' : 'M18 15l-6-6-6 6'} />
-              </svg>
-            </button>
-          </div>
-          {headerExtra && <div className="mt-2">{headerExtra}</div>}
-        </div>
-
-        {/* Always-shown content — visible even when rolled up */}
-        <div className="shrink-0">
-          {alwaysShownContent}
-        </div>
-
-        {/* Collapsible section — CSS grid trick for smooth height animation */}
-        <div
-          className="grid transition-[grid-template-rows] duration-300 ease-in-out"
-          style={{ gridTemplateRows: rolledUp ? '0fr' : '1fr' }}
-        >
-          <div className="overflow-hidden min-h-0">
-            <div
-              className="overflow-y-auto px-5 py-4 flex flex-col gap-5"
-              style={{ maxHeight: 'calc(100dvh - 26rem)' }}
-            >
-              {collapsibleContent}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer — always visible */}
-        {footer && (
-          <div className="shrink-0 border-t border-gray-100">
-            {footer}
-          </div>
+  // ── Shared header ────────────────────────────────────────────────────────
+  const header = (
+    <div className="shrink-0 px-5 pt-4 pb-3 border-b border-gray-100">
+      <div className="flex items-center gap-2">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full border border-gray-200 hover:bg-gray-50 transition-colors text-slate"
+            aria-label="Go back"
+          >
+            <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+              <path d="M19 12H5M12 5l-7 7 7 7" />
+            </svg>
+          </button>
         )}
+        <h2 className="flex-1 min-w-0 text-base font-bold text-slate">{titleContent ?? title}</h2>
+      </div>
+      {headerExtra && <div className="mt-2">{headerExtra}</div>}
+    </div>
+  );
 
-        {/* Resize handle */}
+  // ── Mobile: bottom dock ─────────────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <div
+        className="absolute bottom-0 left-0 right-0 z-10 pointer-events-auto bg-white/97 backdrop-blur-sm rounded-t-2xl shadow-[0_-4px_24px_rgba(0,0,0,0.12)] overflow-hidden flex flex-col"
+        style={{ height: panelHeight }}
+      >
+        {/* Top resize handle */}
         <div
-          onPointerDown={onResizePointerDown}
-          className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-ew-resize group rounded-r-2xl"
+          onPointerDown={onTopGripperDown}
+          className="shrink-0 h-5 flex justify-center items-center cursor-ns-resize"
           aria-hidden="true"
           title="Drag to resize"
         >
-          <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="w-1 h-1 rounded-full bg-gray-400" />
-            ))}
-          </div>
+          <div className="w-10 h-1 rounded-full bg-gray-300" />
+        </div>
+        {header}
+        {alwaysShownContent && <div className="shrink-0">{alwaysShownContent}</div>}
+        <div className="flex-1 overflow-y-auto min-h-0 px-5 py-4 flex flex-col gap-5">
+          {collapsibleContent}
+        </div>
+        {footer && <div className="shrink-0 border-t border-gray-100">{footer}</div>}
+      </div>
+    );
+  }
+
+  // ── Desktop: left side panel ────────────────────────────────────────────
+  return (
+    <div
+      className="absolute left-4 z-10 pointer-events-auto bg-white/97 backdrop-blur-sm rounded-2xl shadow-lg overflow-hidden flex flex-col"
+      style={{ top: panelTop, bottom: 16, width, transition: 'top 200ms ease' }}
+    >
+      {header}
+      {alwaysShownContent && <div className="shrink-0">{alwaysShownContent}</div>}
+      <div className="flex-1 overflow-y-auto min-h-0 px-5 py-4 flex flex-col gap-5">
+        {collapsibleContent}
+      </div>
+      {footer && <div className="shrink-0 border-t border-gray-100">{footer}</div>}
+      {/* Resize handle — right edge */}
+      <div
+        onPointerDown={onResizePointerDown}
+        className="absolute right-0 top-0 bottom-0 w-3 flex items-center justify-center cursor-ew-resize group rounded-r-2xl"
+        aria-hidden="true"
+        title="Drag to resize"
+      >
+        <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="w-1 h-1 rounded-full bg-gray-400" />
+          ))}
         </div>
       </div>
-
-      {/* ── Circular info button — shown when panel is collapsed ── */}
-      <button
-        onClick={() => setCollapsed(false)}
-        className="absolute left-2 top-1/2 -translate-y-1/2 w-14 h-14 rounded-full bg-white shadow-xl border border-gray-200 flex items-center justify-center pointer-events-auto"
-        style={{
-          opacity: collapsed ? 1 : 0,
-          pointerEvents: collapsed ? 'auto' : 'none',
-          transition: 'opacity 300ms cubic-bezier(0.4, 0, 0.2, 1)',
-        }}
-        title={collapsedTooltip}
-        aria-label={`Show ${title}`}
-      >
-        {collapsedIcon}
-      </button>
     </div>
   );
 }
