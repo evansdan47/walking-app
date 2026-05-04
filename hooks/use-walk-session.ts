@@ -18,8 +18,8 @@ export type WalkSessionPhase = 'idle' | 'recording' | 'paused' | 'completed' | '
 
 export type WalkSessionState =
   | { phase: 'idle' }
-  | { phase: 'recording'; walkId: string; startedAt: number }
-  | { phase: 'paused'; walkId: string; startedAt: number; pausedAt: number }
+  | { phase: 'recording'; walkId: string; startedAt: number; isLive: boolean }
+  | { phase: 'paused'; walkId: string; startedAt: number; pausedAt: number; isLive: boolean }
   | { phase: 'completing'; walkId: string }
   | { phase: 'completed'; walkId: string };
 
@@ -40,10 +40,10 @@ function resolveInitialState(): WalkSessionState {
   }
 
   if (walk.status === 'recording') {
-    return { phase: 'recording', walkId: walk.id, startedAt: walk.startedAt };
+    return { phase: 'recording', walkId: walk.id, startedAt: walk.startedAt, isLive: walk.isLive };
   }
   if (walk.status === 'paused') {
-    return { phase: 'paused', walkId: walk.id, startedAt: walk.startedAt, pausedAt: Date.now() };
+    return { phase: 'paused', walkId: walk.id, startedAt: walk.startedAt, pausedAt: Date.now(), isLive: walk.isLive };
   }
 
   return { phase: 'idle' };
@@ -74,18 +74,19 @@ export function useWalkSession() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = useCallback(async () => {
+  const start = useCallback(async (options?: { isLive?: boolean }) => {
     const walkId = randomUUID();
     const deviceId = `${Platform.OS}-${Platform.Version}`;
     const startedAt = Date.now();
+    const isLive = options?.isLive ?? false;
     pausedDurationMsRef.current = 0;
     pausedAtRef.current = null;
 
-    createWalk({ id: walkId, deviceId, startedAt });
+    createWalk({ id: walkId, deviceId, startedAt, isLive });
     setActiveWalkId(walkId);
     await startTracking();
 
-    setState({ phase: 'recording', walkId, startedAt });
+    setState({ phase: 'recording', walkId, startedAt, isLive });
   }, [startTracking]);
 
   const pause = useCallback(async () => {
@@ -94,7 +95,7 @@ export function useWalkSession() {
     pausedAtRef.current = now;
     await stopTracking();
     updateWalkStatus(state.walkId, 'paused');
-    setState({ phase: 'paused', walkId: state.walkId, startedAt: state.startedAt, pausedAt: now });
+    setState({ phase: 'paused', walkId: state.walkId, startedAt: state.startedAt, pausedAt: now, isLive: state.isLive });
   }, [state, stopTracking]);
 
   const resume = useCallback(async () => {
@@ -105,7 +106,7 @@ export function useWalkSession() {
     }
     await startTracking();
     updateWalkStatus(state.walkId, 'recording');
-    setState({ phase: 'recording', walkId: state.walkId, startedAt: state.startedAt });
+    setState({ phase: 'recording', walkId: state.walkId, startedAt: state.startedAt, isLive: state.isLive });
   }, [state, startTracking]);
 
   const stop = useCallback(async (stepCount?: number) => {

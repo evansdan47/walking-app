@@ -10,6 +10,8 @@ export default defineSchema({
     name: v.optional(v.string()),
     email: v.optional(v.string()),
     weightKg: v.optional(v.number()),
+    /** Set via the Convex dashboard to grant admin privileges. */
+    isAdmin: v.optional(v.boolean()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   /**
@@ -34,6 +36,14 @@ export default defineSchema({
     startedAt: v.number(), // Unix ms
     endedAt: v.optional(v.number()), // Unix ms — set when status -> completed
     deviceId: v.string(),
+    /**
+     * Set to true when a walk is actively recording and the device is online.
+     * Reserved for future real-time friend-location features — a subscription
+     * on `by_userId_and_status` filtered by isLive will surface live walks
+     * without any schema changes.
+     * Flipped to false (or left unset) when the walk completes.
+     */
+    isLive: v.optional(v.boolean()),
     stats: v.optional(
       v.object({
         distanceMetres: v.number(),

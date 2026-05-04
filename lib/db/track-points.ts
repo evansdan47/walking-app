@@ -10,6 +10,8 @@ export interface TrackPoint {
   speedMps: number | null;
   accuracyMetres: number;
   isClean: boolean;
+  /** Unix ms when this point was successfully pushed to Convex (live walk). Null if not yet synced. */
+  syncedAt: number | null;
 }
 
 type TrackPointRow = {
@@ -22,6 +24,7 @@ type TrackPointRow = {
   speed_mps: number | null;
   accuracy_metres: number;
   is_clean: number;
+  synced_at: number | null;
 };
 
 function rowToPoint(row: TrackPointRow): TrackPoint {
@@ -35,6 +38,7 @@ function rowToPoint(row: TrackPointRow): TrackPoint {
     speedMps: row.speed_mps,
     accuracyMetres: row.accuracy_metres,
     isClean: row.is_clean === 1,
+    syncedAt: row.synced_at ?? null,
   };
 }
 
@@ -87,4 +91,32 @@ export function getFirstPointForWalk(walkId: string): TrackPoint | null {
     walkId,
   );
   return row ? rowToPoint(row) : null;
+}
+
+/**
+ * Returns all points for a walk that have not yet been pushed to Convex
+ * (synced_at IS NULL). Used by the live-sync hook to determine what to flush.
+ * Ordered oldest-first so Convex receives points in chronological order.
+ */
+export function getUnsyncedPointsForWalk(walkId: string): TrackPoint[] {
+  const rows = db.getAllSync<TrackPointRow>(
+    `SELECT * FROM track_points WHERE walk_id = ? AND synced_at IS NULL ORDER BY timestamp ASC`,
+    walkId,
+  );
+  return rows.map(rowToPoint);
+}
+
+/**
+ * Marks the given track point IDs as successfully synced to Convex.
+ * Called after each successful insertBatch during live sync and post-walk upload.
+ */
+export function markPointsSynced(ids: string[]): void {
+  if (ids.length === 0) return;
+  const now = Date.now();
+  const placeholders = ids.map(() => '?').join(',');
+  db.runSync(
+    `UPDATE track_points SET synced_at = ? WHERE id IN (${placeholders})`,
+    now,
+    ...ids,
+  );
 }

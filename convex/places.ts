@@ -213,7 +213,7 @@ export const confirmPlace = mutation({
     const total = confirmationCount + rejectionCount;
     const confidenceScore = total > 0 ? confirmationCount / total : 0;
 
-    let verificationStatus: string | undefined;
+    let verificationStatus: 'community_confirmed' | 'rejected' | 'community_reported' | undefined;
     if (confirmationCount >= 3 && confidenceScore >= 0.7) {
       verificationStatus = 'community_confirmed';
     } else if (rejectionCount >= 3 && confidenceScore <= 0.3) {

@@ -61,6 +61,50 @@ function totalKm(points: Point[]): number {
   return d;
 }
 
+// ── POI auto-discovery ─────────────────────────────────────────────────────
+
+/**
+ * Corridor half-width for automatic POI discovery, in metres.
+ * Configurable via NEXT_PUBLIC_POI_AUTO_DISCOVER_RADIUS_METRES (default 350 m).
+ */
+export const POI_DISCOVER_RADIUS_M = Math.max(
+  1,
+  parseInt(process.env.NEXT_PUBLIC_POI_AUTO_DISCOVER_RADIUS_METRES ?? '350', 10),
+);
+
+/**
+ * Minimum distance in metres from (lat, lng) to any segment of `points`.
+ * Uses the equirectangular (flat-earth) approximation — fast, accurate
+ * enough for corridor widths up to ~5 km.
+ */
+function minDistToRouteMetres(lat: number, lng: number, points: Point[]): number {
+  if (points.length === 0) return Infinity;
+  const LAT_M = 111_320;
+  const LNG_M = LAT_M * Math.cos((lat * Math.PI) / 180);
+  let minDist = Infinity;
+  for (let i = 0; i < points.length; i++) {
+    const ax = (points[i].lng - lng) * LNG_M;
+    const ay = (points[i].lat - lat) * LAT_M;
+    if (i === 0) {
+      minDist = Math.min(minDist, Math.hypot(ax, ay));
+      continue;
+    }
+    const px = (points[i - 1].lng - lng) * LNG_M;
+    const py = (points[i - 1].lat - lat) * LAT_M;
+    const dx = ax - px;
+    const dy = ay - py;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-8) {
+      minDist = Math.min(minDist, Math.hypot(px, py), Math.hypot(ax, ay));
+      continue;
+    }
+    // Parameter t: projection of the POI (at origin) onto segment prev→curr
+    const t = Math.max(0, Math.min(1, (-px * dx - py * dy) / len2));
+    minDist = Math.min(minDist, Math.hypot(px + t * dx, py + t * dy));
+  }
+  return minDist;
+}
+
 /**
  * Insert intermediate points along each segment at `maxSpacingKm` intervals
  * so the elevation chart shows actual terrain instead of a straight line
@@ -1266,6 +1310,9 @@ function PlannerSidebar({
                       {poi.visibility === 'community' && (
                         <span className="ml-1 text-orange-500">· community</span>
                       )}
+                      {poi.autoDiscovered && (
+                        <span className="ml-1 text-blue-400">· nearby</span>
+                      )}
                     </p>
                   </div>
                   <button
@@ -1561,6 +1608,13 @@ interface PlannerOverlayProps {
   onTogglePoiMode: () => void;
   pendingPoiLngLat: { lng: number; lat: number } | null;
   onPendingPoiCancel: () => void;
+  // Edit mode — set when the user clicks Edit on an existing route in Explore
+  editingRouteId?: Id<'plannedRoutes'> | null;
+  initialRouteName?: string;
+  initialRouteDescription?: string;
+  onRouteSaved?: (id: Id<'plannedRoutes'>) => void;
+  /** Called whenever the pending-POI list changes, so map-shell can render markers. */
+  onPendingPoisChange?: (pois: PendingPoi[]) => void;
 }
 
 export function PlannerOverlay({
@@ -1592,16 +1646,131 @@ export function PlannerOverlay({
   onTogglePoiMode,
   pendingPoiLngLat,
   onPendingPoiCancel,
+  editingRouteId,
+  initialRouteName,
+  initialRouteDescription,
+  onRouteSaved,
+  onPendingPoisChange,
 }: PlannerOverlayProps) {
   const [confirmClearOpen, setConfirmClearOpen] = useState(false);
   const [saveDialogOpen, setSaveDialogOpen] = useState(false);
-  const [routeName, setRouteName] = useState('');
+  const [routeName, setRouteName] = useState(initialRouteName ?? '');
   const [sidebarWidth, setSidebarWidth] = useState<number>(() =>
     clampWidth(typeof window !== 'undefined' ? window.innerWidth * DEFAULT_WIDTH_RATIO : 340)
   );
 
   // Pending POIs: held locally, saved atomically with the route.
   const [pendingPois, setPendingPois] = useState<PendingPoi[]>([]);
+
+  // Notify map-shell whenever the POI list changes so it can render markers.
+  useEffect(() => { onPendingPoisChange?.(pendingPois); }, [pendingPois, onPendingPoisChange]);
+
+  // When editing an existing route, seed pendingPois from the saved places.
+  const existingPlaces = useQuery(
+    api.places.getByPlannedRoute,
+    editingRouteId ? { plannedRouteId: editingRouteId } : 'skip',
+  );
+  const seededRef = useRef(false);
+  useEffect(() => { seededRef.current = false; }, [editingRouteId]);
+  useEffect(() => {
+    if (!existingPlaces || seededRef.current) return;
+    seededRef.current = true;
+    setPendingPois(
+      existingPlaces.map((r) => ({
+        lngLat: { lng: r.place.longitude, lat: r.place.latitude },
+        type: r.place.type as PendingPoi['type'],
+        name: r.place.name,
+        details: r.place.details as Record<string, unknown> | undefined,
+        visibility: (r.place.visibility === 'public' ? 'community' : r.place.visibility) as PendingPoi['visibility'],
+        distanceFromStartMetres: r.distanceFromStartMetres,
+        order: r.order,
+        savedPlaceId: r.placeId,
+        alreadyLinked: true,
+      } as PendingPoi))
+    );
+  }, [existingPlaces]);
+
+  // ── POI auto-discovery ────────────────────────────────────────────────────
+  // IDs of auto-discovered POIs the user explicitly dismissed — never re-add.
+  const dismissedAutoIds = useRef<Set<string>>(new Set());
+  useEffect(() => { dismissedAutoIds.current.clear(); }, [editingRouteId]);
+
+  // Bounding box for the current route, expanded by the discovery radius.
+  const poiDiscoveryBbox = useMemo(() => {
+    if (allPoints.length < 1) return null;
+    let minLat = allPoints[0].lat, maxLat = allPoints[0].lat;
+    let minLng = allPoints[0].lng, maxLng = allPoints[0].lng;
+    for (const p of allPoints) {
+      if (p.lat < minLat) minLat = p.lat;
+      if (p.lat > maxLat) maxLat = p.lat;
+      if (p.lng < minLng) minLng = p.lng;
+      if (p.lng > maxLng) maxLng = p.lng;
+    }
+    const padLat = POI_DISCOVER_RADIUS_M / 111_320;
+    const midLat = (minLat + maxLat) / 2;
+    const padLng = POI_DISCOVER_RADIUS_M / (111_320 * Math.cos((midLat * Math.PI) / 180));
+    return { minLat: minLat - padLat, maxLat: maxLat + padLat, minLng: minLng - padLng, maxLng: maxLng + padLng };
+  }, [allPoints]);
+
+  const nearbyPlaces = useQuery(
+    api.places.getNearBbox,
+    poiDiscoveryBbox
+      ? { ...poiDiscoveryBbox, visibilities: ['community', 'public'] as const }
+      : 'skip',
+  );
+
+  // Merge auto-discovered POIs whenever route or nearby data changes.
+  useEffect(() => {
+    if (allPoints.length < 2) {
+      // Clear auto-discovered POIs when there's no route.
+      setPendingPois(prev => prev.filter(p => !p.autoDiscovered));
+      return;
+    }
+    if (!nearbyPlaces) return;
+
+    setPendingPois(prev => {
+      // Remove auto-discovered POIs that are now out of range or dismissed.
+      const nearbySet = new Set(nearbyPlaces.map((p: { _id: string }) => p._id));
+      const filtered = prev.filter(p => {
+        if (!p.autoDiscovered) return true;
+        if (!p.savedPlaceId || !nearbySet.has(p.savedPlaceId)) return false;
+        return minDistToRouteMetres(p.lngLat.lat, p.lngLat.lng, allPoints) <= POI_DISCOVER_RADIUS_M;
+      });
+
+      // Add newly in-range POIs.
+      const existingIds = new Set(filtered.map(p => p.savedPlaceId).filter(Boolean));
+      const toAdd: PendingPoi[] = [];
+      for (const place of nearbyPlaces as Array<{
+        _id: string; latitude: number; longitude: number; type: string;
+        name?: string; details?: unknown; visibility: string;
+      }>) {
+        if (existingIds.has(place._id)) continue;
+        if (dismissedAutoIds.current.has(place._id)) continue;
+        if (minDistToRouteMetres(place.latitude, place.longitude, allPoints) > POI_DISCOVER_RADIUS_M) continue;
+        // Compute approximate distance from route start.
+        let cumDist = 0, bestDist = Infinity, bestCumDist = 0;
+        for (let i = 0; i < allPoints.length; i++) {
+          if (i > 0) cumDist += haversineKm(allPoints[i - 1], allPoints[i]) * 1000;
+          const d = haversineKm({ lng: place.longitude, lat: place.latitude }, allPoints[i]) * 1000;
+          if (d < bestDist) { bestDist = d; bestCumDist = cumDist; }
+        }
+        toAdd.push({
+          lngLat: { lng: place.longitude, lat: place.latitude },
+          type: place.type as PendingPoi['type'],
+          name: place.name,
+          details: place.details as Record<string, unknown> | undefined,
+          visibility: (place.visibility === 'public' ? 'community' : place.visibility) as PendingPoi['visibility'],
+          distanceFromStartMetres: Math.round(bestCumDist),
+          order: filtered.length + toAdd.length,
+          savedPlaceId: place._id,
+          autoDiscovered: true,
+        });
+      }
+
+      if (toAdd.length === 0 && filtered.length === prev.length) return prev;
+      return [...filtered, ...toAdd];
+    });
+  }, [nearbyPlaces, allPoints]);
 
   function handlePoiAdded(poi: PendingPoi) {
     // Compute distanceFromStartMetres using haversine scan of all route points.
@@ -1621,7 +1790,13 @@ export function PlannerOverlay({
   }
 
   const handleRemovePoi = useCallback((index: number) => {
-    setPendingPois(prev => prev.filter((_, i) => i !== index));
+    setPendingPois(prev => {
+      const poi = prev[index];
+      if (poi?.autoDiscovered && poi.savedPlaceId) {
+        dismissedAutoIds.current.add(poi.savedPlaceId);
+      }
+      return prev.filter((_, i) => i !== index);
+    });
   }, []);
 
   const handleWidthChange = useCallback((w: number) => setSidebarWidth(w), []);
@@ -1741,12 +1916,14 @@ export function PlannerOverlay({
       <SaveRouteDialog
         open={saveDialogOpen}
         onClose={() => setSaveDialogOpen(false)}
-        onSaved={() => setSaveDialogOpen(false)}
+        onSaved={(id) => { setSaveDialogOpen(false); onRouteSaved?.(id); }}
         legs={legs}
         totalDistKm={totalDistKm}
         elevGainM={elevGainM}
         initialTitle={routeName}
+        initialDescription={initialRouteDescription}
         pendingPois={pendingPois}
+        editingRouteId={editingRouteId}
       />
 
       {/* ── Confirm clear dialog ── */}
@@ -1768,7 +1945,7 @@ export function PlannerOverlay({
 
 // ── Save Route Dialog ────────────────────────────────────────────────────────
 
-function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM, initialTitle, pendingPois }: {
+function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM, initialTitle, initialDescription, pendingPois, editingRouteId }: {
   open: boolean;
   onClose: () => void;
   onSaved: (id: Id<'plannedRoutes'>) => void;
@@ -1776,9 +1953,12 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
   totalDistKm: number;
   elevGainM: number;
   initialTitle?: string;
+  initialDescription?: string;
   pendingPois: PendingPoi[];
+  editingRouteId?: Id<'plannedRoutes'> | null;
 }) {
   const saveRoute = useMutation(api.planned_routes.save);
+  const updateRoute = useMutation(api.planned_routes.update);
   const createPlace = useMutation(api.places.createPlace);
   const linkToPlannedRoute = useMutation(api.places.linkToPlannedRoute);
   const [title, setTitle] = useState('');
@@ -1790,7 +1970,7 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
   useEffect(() => {
     if (open) {
       setTitle(initialTitle?.trim() ?? '');
-      setDescription('');
+      setDescription(initialDescription?.trim() ?? '');
       setError('');
       setTimeout(() => {
         const el = titleRef.current;
@@ -1814,23 +1994,46 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
     setSaving(true);
     setError('');
     try {
-      const id = await saveRoute({
-        title: trimmed,
-        ...(description.trim() ? { description: description.trim() } : {}),
-        legs,
-        stats: { distanceKm: Math.round(totalDistKm * 100) / 100, elevationGainM: Math.round(elevGainM) },
-      });
+      let id: Id<'plannedRoutes'>;
 
-      // Save all pending POIs and link them to this route.
-      for (const poi of pendingPois) {
-        const placeId = await createPlace({
-          type: poi.type,
-          visibility: poi.visibility,
-          latitude: poi.lngLat.lat,
-          longitude: poi.lngLat.lng,
-          ...(poi.name ? { name: poi.name } : {}),
-          ...(poi.details ? { details: poi.details } : {}),
+      if (editingRouteId) {
+        // ── Update existing route ────────────────────────────────────────
+        id = await updateRoute({
+          id: editingRouteId,
+          title: trimmed,
+          ...(description.trim() ? { description: description.trim() } : {}),
+          legs,
+          stats: { distanceKm: Math.round(totalDistKm * 100) / 100, elevationGainM: Math.round(elevGainM) },
         });
+      } else {
+        // ── Create new route ─────────────────────────────────────────────
+        id = await saveRoute({
+          title: trimmed,
+          ...(description.trim() ? { description: description.trim() } : {}),
+          legs,
+          stats: { distanceKm: Math.round(totalDistKm * 100) / 100, elevationGainM: Math.round(elevGainM) },
+        });
+      }
+
+      // Persist POIs:
+      //   alreadyLinked  → skip entirely (already in DB and linked to this route)
+      //   savedPlaceId   → auto-discovered: already in DB, just link to the route
+      //   neither        → new POI: create in DB then link
+      for (const poi of pendingPois) {
+        if (poi.alreadyLinked) continue;
+        let placeId: Id<'places'>;
+        if (poi.savedPlaceId) {
+          placeId = poi.savedPlaceId as Id<'places'>;
+        } else {
+          placeId = await createPlace({
+            type: poi.type,
+            visibility: poi.visibility,
+            latitude: poi.lngLat.lat,
+            longitude: poi.lngLat.lng,
+            ...(poi.name ? { name: poi.name } : {}),
+            ...(poi.details ? { details: poi.details } : {}),
+          });
+        }
         await linkToPlannedRoute({
           plannedRouteId: id,
           placeId,
@@ -1865,7 +2068,7 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
       <div className="relative z-10 w-full max-w-sm mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden">
         <div className="h-1 w-full bg-brand" />
         <div className="px-5 pt-5 pb-5">
-          <h2 id="save-route-title" className="text-base font-bold text-slate mb-0.5">Save route</h2>
+          <h2 id="save-route-title" className="text-base font-bold text-slate mb-0.5">{editingRouteId ? 'Update route' : 'Save route'}</h2>
           <p className="text-[11px] text-slate-light mb-4">
             {distLabel}{elevGainM > 0 ? ` · +${Math.round(elevGainM)} m elevation` : ''}
           </p>
@@ -1913,7 +2116,11 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
               disabled={!title.trim() || saving}
               className="px-4 py-1.5 text-sm font-semibold bg-brand hover:bg-brand-dark disabled:opacity-50 text-white rounded-lg transition-colors shadow-sm"
             >
-              {saving ? 'Saving…' : pendingPois.length > 0 ? `Save route + ${pendingPois.length} POI${pendingPois.length !== 1 ? 's' : ''}` : 'Save route'}
+              {saving
+                ? (editingRouteId ? 'Updating…' : 'Saving…')
+                : editingRouteId
+                  ? 'Update route'
+                  : pendingPois.length > 0 ? `Save route + ${pendingPois.length} POI${pendingPois.length !== 1 ? 's' : ''}` : 'Save route'}
             </button>
           </div>
         </div>

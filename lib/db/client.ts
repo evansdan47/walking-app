@@ -68,6 +68,20 @@ export { db };
 // which is the correct behaviour for idempotent migrations.
 try { db.execSync(`ALTER TABLE walk_photos ADD COLUMN heading REAL`); } catch {}
 
+// sync_jobs: retry tracking columns added for exponential backoff and
+// mid-upload checkpointing.
+try { db.execSync(`ALTER TABLE sync_jobs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { db.execSync(`ALTER TABLE sync_jobs ADD COLUMN next_attempt_at INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { db.execSync(`ALTER TABLE sync_jobs ADD COLUMN uploaded_point_count INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+// walks: live broadcast flag — true when user explicitly starts a live walk.
+try { db.execSync(`ALTER TABLE walks ADD COLUMN is_live INTEGER NOT NULL DEFAULT 0`); } catch {}
+
+// track_points: timestamp of when the point was successfully pushed to Convex
+// during a live walk. NULL means not yet synced.
+try { db.execSync(`ALTER TABLE track_points ADD COLUMN synced_at INTEGER`); } catch {}
+try { db.execSync(`CREATE INDEX IF NOT EXISTS idx_track_points_unsynced ON track_points(walk_id, synced_at) WHERE synced_at IS NULL`); } catch {}
+
 export function getKv(key: string): string | null {
   const row = db.getFirstSync<{ value: string }>(`SELECT value FROM kv_store WHERE key = ?`, key);
   return row?.value ?? null;

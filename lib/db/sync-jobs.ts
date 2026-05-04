@@ -1,4 +1,9 @@
 import { db } from './client';
+import {
+  SYNC_BACKOFF_BASE_MS,
+  SYNC_BACKOFF_MAX_MS,
+  MAX_SYNC_RETRIES,
+} from '@/lib/sync/sync-config';
 
 export interface SyncJob {
   id: string;
@@ -7,6 +12,12 @@ export interface SyncJob {
   status: 'pending' | 'in_progress' | 'completed' | 'failed';
   attemptedAt: number | null;
   errorMessage: string | null;
+  /** Number of upload attempts made so far. */
+  attemptCount: number;
+  /** Unix ms timestamp before which this job should not be retried (backoff). */
+  nextAttemptAt: number;
+  /** Track points already confirmed uploaded to Convex (checkpoint for resume). */
+  uploadedPointCount: number;
 }
 
 type SyncJobRow = {
@@ -16,6 +27,9 @@ type SyncJobRow = {
   status: string;
   attempted_at: number | null;
   error_message: string | null;
+  attempt_count: number;
+  next_attempt_at: number;
+  uploaded_point_count: number;
 };
 
 function rowToJob(row: SyncJobRow): SyncJob {
@@ -26,6 +40,9 @@ function rowToJob(row: SyncJobRow): SyncJob {
     status: row.status as SyncJob['status'],
     attemptedAt: row.attempted_at,
     errorMessage: row.error_message,
+    attemptCount: row.attempt_count ?? 0,
+    nextAttemptAt: row.next_attempt_at ?? 0,
+    uploadedPointCount: row.uploaded_point_count ?? 0,
   };
 }
 
@@ -44,8 +61,13 @@ export function createSyncJob(job: {
 }
 
 export function getPendingJobs(): SyncJob[] {
+  const now = Date.now();
   const rows = db.getAllSync<SyncJobRow>(
-    `SELECT * FROM sync_jobs WHERE status IN ('pending','failed') ORDER BY rowid ASC`,
+    `SELECT * FROM sync_jobs
+     WHERE status IN ('pending', 'failed')
+       AND next_attempt_at <= ?
+     ORDER BY rowid ASC`,
+    now,
   );
   return rows.map(rowToJob);
 }
@@ -55,11 +77,50 @@ export function updateJobStatus(
   status: SyncJob['status'],
   errorMessage?: string,
 ): void {
+  const now = Date.now();
+  if (status === 'failed') {
+    // Fetch current attempt count to compute backoff.
+    const row = db.getFirstSync<{ attempt_count: number }>(
+      `SELECT attempt_count FROM sync_jobs WHERE id = ?`,
+      id,
+    );
+    const attempts = (row?.attempt_count ?? 0) + 1;
+    const backoffMs = Math.min(
+      SYNC_BACKOFF_BASE_MS * Math.pow(2, attempts - 1),
+      SYNC_BACKOFF_MAX_MS,
+    );
+    const nextAttemptAt = attempts >= MAX_SYNC_RETRIES ? Number.MAX_SAFE_INTEGER : now + backoffMs;
+    db.runSync(
+      `UPDATE sync_jobs
+       SET status = ?, attempted_at = ?, error_message = ?,
+           attempt_count = ?, next_attempt_at = ?
+       WHERE id = ?`,
+      status,
+      now,
+      errorMessage ?? null,
+      attempts,
+      nextAttemptAt,
+      id,
+    );
+  } else {
+    db.runSync(
+      `UPDATE sync_jobs SET status = ?, attempted_at = ?, error_message = ? WHERE id = ?`,
+      status,
+      now,
+      errorMessage ?? null,
+      id,
+    );
+  }
+}
+
+/**
+ * Persists a mid-upload checkpoint so that a retry can resume from where
+ * the previous attempt left off rather than re-uploading from scratch.
+ */
+export function updateJobProgress(id: string, uploadedPointCount: number): void {
   db.runSync(
-    `UPDATE sync_jobs SET status = ?, attempted_at = ?, error_message = ? WHERE id = ?`,
-    status,
-    Date.now(),
-    errorMessage ?? null,
+    `UPDATE sync_jobs SET uploaded_point_count = ? WHERE id = ?`,
+    uploadedPointCount,
     id,
   );
 }

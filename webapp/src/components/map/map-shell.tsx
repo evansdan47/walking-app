@@ -3,12 +3,19 @@
 import { useUndoRedo } from '@/hooks/use-undo-redo';
 import { usePreview } from '@/components/preview-context';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CircleLayer, LineLayer, SymbolLayer } from 'react-map-gl/mapbox';
-import Map, { Layer, Marker, Source, type MapLayerMouseEvent, type MapRef } from 'react-map-gl/mapbox';
+import Map, { Layer, Marker, Popup, Source, type MapLayerMouseEvent, type MapRef } from 'react-map-gl/mapbox';
 import { ExploreMapLayers, ExploreOverlay, type EnrichedRoute } from './explore-overlay';
 import { PlannerOverlay, SEGMENT_COLOURS, bearingDeg, densifyPoints, haversineKm, toGeoJSON, toMultiGeoJSON, type ChartRange, type Leg, type Point } from './planner-overlay';
+import { PLACE_TYPE_META } from './poi-add-form';
+import type { Id } from '@convex/_generated/dataModel';
+
+// ── Planner initial state (module-scope so it’s a stable reference) ──────────────
+const INITIAL_LEGS: Leg[] = [
+  { id: 's1', name: 'Leg 1', color: SEGMENT_COLOURS[0], points: [] },
+];
 
 // â”€â”€ Route layer styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -146,6 +153,7 @@ type Mode = 'explore' | 'planner';
 export function MapShell() {
   const searchParams = useSearchParams();
   const mode = (searchParams.get('mode') ?? 'explore') as Mode;
+  const router = useRouter();
   const { setIsPreviewing } = usePreview();
 
   // Initial viewport â€” read from URL once on mount, never reset by re-renders
@@ -168,6 +176,7 @@ export function MapShell() {
     canRedo,
   } = useUndoRedo<Leg[]>(initialLegs);
   const [activeSegmentId, setActiveSegmentId] = useState('s1');
+  const [editingRoute, setEditingRoute] = useState<EnrichedRoute | null>(null);
   const [snapToPath, setSnapToPath] = useState(true);
   const [turnaroundIdx, setTurnaroundIdx] = useState<number | null>(null);
   const [isPending, setIsPending] = useState(false);
@@ -176,7 +185,9 @@ export function MapShell() {
   // When true the next map click drops a POI marker instead of a route point.
   const [poiMode, setPoiMode] = useState(false);
   const [pendingPoiLngLat, setPendingPoiLngLat] = useState<{ lng: number; lat: number } | null>(null);
-
+  /** Mirror of PlannerOverlay's pendingPois — used only for map marker rendering. */
+  const [poiMarkers, setPoiMarkers] = useState<Array<{ lngLat: { lng: number; lat: number }; type: string; name?: string }>>([]);
+  const [hoveredPoiIdx, setHoveredPoiIdx] = useState<number | null>(null);
   // Hovered ball ID — drives hover highlight on the route balls circle layer
   const [hoveredBallId, setHoveredBallId] = useState<number | null>(null);
   const [hoveredBallTooltip, setHoveredBallTooltip] = useState<{ x: number; y: number; isControlPoint: boolean } | null>(null);
@@ -891,6 +902,29 @@ export function MapShell() {
     });
   }, [allPoints, endWalkPreview]);
 
+  /** Load a route into the planner for editing, then navigate to planner mode. */
+  const handleEditRoute = useCallback((route: EnrichedRoute) => {
+    const legs = route.legs as Leg[];
+    resetLegs(legs);
+    setEditingRoute(route);
+    // Sync activeSegmentId to the first leg of the loaded route so
+    // activeLegStartFi = 0 and per-waypoint flatIdx values stay in range.
+    setActiveSegmentId(legs[0]?.id ?? 's1');
+    const params = new URLSearchParams(window.location.search);
+    params.set('mode', 'planner');
+    router.push(`/map?${params.toString()}`);
+  }, [resetLegs, router]);
+
+  /** Called after a successful save/update. Clears edit state and returns to Explore. */
+  const handleRouteSaved = useCallback((_id: Id<'plannedRoutes'>) => {
+    setEditingRoute(null);
+    setPoiMarkers([]);
+    resetLegs(INITIAL_LEGS);
+    const params = new URLSearchParams(window.location.search);
+    params.set('mode', 'explore');
+    router.push(`/map?${params.toString()}`);
+  }, [resetLegs, router]);
+
   /** Preview an explore-mode route without loading it into planner legs. */
   const handlePreviewExploreRoute = useCallback((route: EnrichedRoute) => {
     const pts: Point[] = route.legs.flatMap((leg: { points: Array<{ lng: number; lat: number }> }) =>
@@ -1072,6 +1106,138 @@ export function MapShell() {
     }
   }, [legs, snapToPath, commit]);
 
+  // Drag the start (or loop) marker to reposition the first point of a leg.
+  // Re-snaps only the adjacent outbound segment (and, for loops, the closing segment).
+  const handleStartDragEnd = useCallback(async (legId: string, newLng: number, newLat: number) => {
+    const legIdx = legs.findIndex(l => l.id === legId);
+    if (legIdx === -1) return;
+    const legPts = legs[legIdx].points;
+    if (legPts.length === 0) return;
+
+    const newStart: Point = { lng: newLng, lat: newLat, isControlPoint: true, isSnapped: false };
+
+    const legIsLoop =
+      legPts.length >= 3 &&
+      legPts[0].lng === legPts[legPts.length - 1].lng &&
+      legPts[0].lat === legPts[legPts.length - 1].lat;
+
+    // First CP after index 0 (for loops, exclude the closing duplicate at [len-1])
+    const fwdLimit = legIsLoop ? legPts.length - 1 : legPts.length;
+    let nextCpIdx = -1;
+    for (let i = 1; i < fwdLimit; i++) {
+      if (legPts[i].isControlPoint) { nextCpIdx = i; break; }
+    }
+    // For loops: last CP before the closing duplicate
+    let prevCpIdx = -1;
+    if (legIsLoop) {
+      for (let i = legPts.length - 2; i >= 1; i--) {
+        if (legPts[i].isControlPoint) { prevCpIdx = i; break; }
+      }
+    }
+
+    setIsPending(true);
+    try {
+      const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+      if (!legIsLoop) {
+        if (snapToPath && nextCpIdx >= 0) {
+          const nextCP = legPts[nextCpIdx];
+          const seg = await fetchSnappedRoute(newStart, nextCP, token);
+          commit(prev => {
+            const next = [...prev];
+            next[legIdx] = { ...next[legIdx], points: [newStart, ...seg, { ...nextCP, isControlPoint: true, isSnapped: true }, ...legPts.slice(nextCpIdx + 1)] };
+            return next;
+          });
+        } else {
+          const rest = nextCpIdx >= 0 ? legPts.slice(nextCpIdx) : legPts.slice(1);
+          commit(prev => {
+            const next = [...prev];
+            next[legIdx] = { ...next[legIdx], points: [newStart, ...rest] };
+            return next;
+          });
+        }
+      } else {
+        if (snapToPath && nextCpIdx >= 0) {
+          const nextCP = legPts[nextCpIdx];
+          const prevCP = prevCpIdx >= 0 ? legPts[prevCpIdx] : null;
+          const seg1 = await fetchSnappedRoute(newStart, nextCP, token);
+          const seg2 = prevCP ? await fetchSnappedRoute(prevCP, newStart, token) : [];
+          // Preserve the unchanged middle section between nextCP and prevCP
+          const middle = prevCpIdx > nextCpIdx ? legPts.slice(nextCpIdx + 1, prevCpIdx + 1) : [];
+          commit(prev => {
+            const next = [...prev];
+            next[legIdx] = {
+              ...next[legIdx],
+              points: [newStart, ...seg1, { ...nextCP, isControlPoint: true, isSnapped: true }, ...middle, ...seg2, { ...newStart }],
+            };
+            return next;
+          });
+        } else {
+          commit(prev => {
+            const next = [...prev];
+            next[legIdx] = { ...next[legIdx], points: [newStart, ...legPts.slice(1, -1), { ...newStart }] };
+            return next;
+          });
+        }
+      }
+    } catch {
+      const fallback = legIsLoop
+        ? [newStart, ...legPts.slice(1, -1), { ...newStart }]
+        : [newStart, ...legPts.slice(1)];
+      commit(prev => { const next = [...prev]; next[legIdx] = { ...next[legIdx], points: fallback }; return next; });
+    } finally {
+      setIsPending(false);
+    }
+  }, [legs, snapToPath, commit]);
+
+  // Drag the end marker to reposition the last point of the active leg.
+  // Re-snaps only the segment from the previous control point to the new end.
+  const handleEndDragEnd = useCallback(async (newLng: number, newLat: number) => {
+    const legIdx = legs.findIndex(l => l.id === activeSegmentId);
+    if (legIdx === -1) return;
+    const legPts = legs[legIdx].points;
+    if (legPts.length < 2) return;
+
+    const newEnd: Point = { lng: newLng, lat: newLat, isControlPoint: true, isSnapped: false };
+
+    // Find the previous CP (second-to-last control point)
+    let prevCpIdx = -1;
+    for (let i = legPts.length - 2; i >= 0; i--) {
+      if (legPts[i].isControlPoint) { prevCpIdx = i; break; }
+    }
+
+    setIsPending(true);
+    try {
+      const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN!;
+      if (snapToPath && prevCpIdx >= 0) {
+        const prevCP = legPts[prevCpIdx];
+        const seg = await fetchSnappedRoute(prevCP, newEnd, token);
+        commit(prev => {
+          const next = [...prev];
+          next[legIdx] = { ...next[legIdx], points: [...legPts.slice(0, prevCpIdx + 1), ...seg, newEnd] };
+          return next;
+        });
+      } else {
+        commit(prev => {
+          const next = [...prev];
+          const pts = [...next[legIdx].points];
+          pts[pts.length - 1] = newEnd;
+          next[legIdx] = { ...next[legIdx], points: pts };
+          return next;
+        });
+      }
+    } catch {
+      commit(prev => {
+        const next = [...prev];
+        const pts = [...next[legIdx].points];
+        pts[pts.length - 1] = newEnd;
+        next[legIdx] = { ...next[legIdx], points: pts };
+        return next;
+      });
+    } finally {
+      setIsPending(false);
+    }
+  }, [legs, activeSegmentId, snapToPath, commit]);
+
   // Ball hover — track hovered feature ID and update Mapbox feature state.
   const handleBallMouseMove = useCallback((e: MapLayerMouseEvent) => {
     const map = mapRef.current?.getMap();
@@ -1125,13 +1291,13 @@ export function MapShell() {
       if (mode !== 'planner') return;
       if (isFlyby) return;
       if (isWalkPreview) { if (!walkPausedRef.current) pauseWalkPreview(); return; }
-      if (isLoop) return;
       if (isPending) return;
       // POI placement mode: capture the click location and open the add-poi form
       if (poiMode) {
         setPendingPoiLngLat({ lng: e.lngLat.lng, lat: e.lngLat.lat });
         return;
       }
+      if (isLoop) return;
       // If a ball was clicked, insert a mid-route control point instead of appending
       const ballFeature = e.features?.find(f => f.layer.id === 'route-balls');
       if (ballFeature) {
@@ -1319,7 +1485,7 @@ export function MapShell() {
         onClick={handleMapClick}
         onMouseMove={mode === 'planner' ? handleBallMouseMove : undefined}
         onLoad={handleMapLoad}
-        cursor={mode === 'planner' && !isLoop ? (isPending ? 'wait' : 'crosshair') : undefined}
+        cursor={mode === 'planner' && (!isLoop || poiMode) ? (isPending ? 'wait' : 'crosshair') : undefined}
       >
         {geoJSON && (
           <Source id="route" type="geojson" data={geoJSON}>
@@ -1395,7 +1561,14 @@ export function MapShell() {
             leg.points[0].lng === leg.points[leg.points.length - 1].lng &&
             leg.points[0].lat === leg.points[leg.points.length - 1].lat;
           return (
-            <Marker key={`start-${leg.id}`} longitude={fp.lng} latitude={fp.lat} anchor="center">
+            <Marker
+              key={`start-${leg.id}`}
+              longitude={fp.lng}
+              latitude={fp.lat}
+              anchor="center"
+              draggable
+              onDragEnd={e => handleStartDragEnd(leg.id, e.lngLat.lng, e.lngLat.lat)}
+            >
               {legIsLoop ? <LoopMarker /> : <StartMarker />}
             </Marker>
           );
@@ -1418,7 +1591,13 @@ export function MapShell() {
               if (end - offset >= 2) {
                 const pt = displayPoints[end - 1];
                 return (
-                  <Marker longitude={pt.lng} latitude={pt.lat} anchor="center">
+                  <Marker
+                    longitude={pt.lng}
+                    latitude={pt.lat}
+                    anchor="center"
+                    draggable
+                    onDragEnd={e => handleEndDragEnd(e.lngLat.lng, e.lngLat.lat)}
+                  >
                     <EndMarker />
                   </Marker>
                 );
@@ -1432,6 +1611,44 @@ export function MapShell() {
 
 
         {/* -- Planner POI markers -- */}
+        {mode === "planner" && poiMarkers.map((poi, i) => (
+          <Marker key={i} longitude={poi.lngLat.lng} latitude={poi.lngLat.lat} anchor="center">
+            <div
+              onMouseEnter={() => setHoveredPoiIdx(i)}
+              onMouseLeave={() => setHoveredPoiIdx(null)}
+              className="w-6 h-6 rounded-full bg-white border-2 border-active shadow flex items-center justify-center text-[11px] leading-none cursor-pointer hover:scale-110 transition-transform"
+            >
+              {PLACE_TYPE_META[poi.type as keyof typeof PLACE_TYPE_META]?.emoji ?? '📍'}
+            </div>
+          </Marker>
+        ))}
+        {mode === "planner" && hoveredPoiIdx !== null && poiMarkers[hoveredPoiIdx] && (() => {
+          const poi = poiMarkers[hoveredPoiIdx];
+          const meta = PLACE_TYPE_META[poi.type as keyof typeof PLACE_TYPE_META];
+          return (
+            <Popup
+              longitude={poi.lngLat.lng}
+              latitude={poi.lngLat.lat}
+              anchor="bottom"
+              offset={16}
+              closeButton={false}
+              closeOnClick={false}
+              onClose={() => setHoveredPoiIdx(null)}
+            >
+              <div className="flex items-start gap-2 py-1 px-0.5 min-w-35 max-w-50">
+                <span className="text-lg leading-none shrink-0 mt-0.5">{meta?.emoji ?? '📍'}</span>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-gray-800 leading-tight">
+                    {poi.name || meta?.label || poi.type}
+                  </p>
+                  <p className="text-[10px] text-gray-400 mt-0.5">
+                    {poi.lngLat.lat.toFixed(5)}, {poi.lngLat.lng.toFixed(5)}
+                  </p>
+                </div>
+              </div>
+            </Popup>
+          );
+        })()}
         {mode === "planner" && pendingPoiLngLat && (
           <Marker longitude={pendingPoiLngLat.lng} latitude={pendingPoiLngLat.lat} anchor="bottom">
             <div className="w-5 h-5 rounded-full bg-active border-2 border-white shadow-md animate-bounce" />
@@ -1469,6 +1686,7 @@ export function MapShell() {
             routeElevations={exploreRouteElevData?.elevations ?? []}
             onElevHoverIdx={setExploreElevHoverIdx}
             onFilteredIdsChange={setExploreFilteredIds}
+            onEditRoute={handleEditRoute}
           />
         )}
         {mode === 'planner' && !isFlyby && !isWalkPreview && (
@@ -1501,6 +1719,11 @@ export function MapShell() {
             onTogglePoiMode={() => { setPoiMode((v) => !v); setPendingPoiLngLat(null); }}
             pendingPoiLngLat={pendingPoiLngLat}
             onPendingPoiCancel={() => { setPendingPoiLngLat(null); setPoiMode(false); }}
+            editingRouteId={editingRoute?._id ?? null}
+            initialRouteName={editingRoute?.title}
+            initialRouteDescription={editingRoute?.description}
+            onRouteSaved={handleRouteSaved}
+            onPendingPoisChange={setPoiMarkers}
           />
         )}
         {isFlyby && (

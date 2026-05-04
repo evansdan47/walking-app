@@ -2,10 +2,13 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 import { api } from '@/convex/_generated/api';
 import type { ConvexReactClient } from 'convex/react';
-import { getPointsForWalk } from '../db/track-points';
+import { db } from '../db/client';
+import { updateJobProgress } from '../db/sync-jobs';
+import { getPointsForWalk, getUnsyncedPointsForWalk, markPointsSynced } from '../db/track-points';
 import { getPhotosForWalk, updatePhotoAfterSync } from '../db/walk-photos';
 import type { WalkStats } from '../db/walks';
 import { getWalk, updateWalkConvexId } from '../db/walks';
+import { SYNC_BATCH_SIZE } from './sync-config';
 
 type ConvexStats = {
   distanceMetres: number;
@@ -17,8 +20,6 @@ type ConvexStats = {
   elevationGainMetres?: number;
   elevationLossMetres?: number;
 };
-
-const BATCH_SIZE = 500;
 
 /** Strips keys with value `undefined` so exactOptionalPropertyTypes is satisfied. */
 function omitUndefined<T extends object>(obj: T): T {
@@ -41,36 +42,75 @@ function toConvexStats(s: WalkStats): ConvexStats {
   return base;
 }
 
+export interface UploadWalkOpts {
+  /** The local sync-job id — used to save mid-upload checkpoints. */
+  jobId: string;
+  /** Track points already confirmed on Convex (resume after a partial failure). */
+  uploadedPointCount: number;
+}
+
 /**
  * Uploads a single completed walk (and all its track points / photos) to Convex.
+ *
+ * Supports checkpoint-based resumption: if a previous attempt uploaded some
+ * batches before failing, `opts.uploadedPointCount` lets us skip those and
+ * continue from where we left off. After every successful batch the checkpoint
+ * is persisted so the next retry never re-uploads confirmed data.
+ *
+ * After all batches complete a reconciliation step queries the server count and
+ * re-uploads any gap, guaranteeing no data loss.
+ *
  * Returns the Convex walk ID on success.
  */
 export async function uploadWalk(
   walkId: string,
   convex: ConvexReactClient,
+  opts: UploadWalkOpts,
 ): Promise<string> {
   const walk = getWalk(walkId);
   if (!walk) throw new Error(`Walk ${walkId} not found in SQLite`);
 
-  // 1 – Create the walk document on the server
-  const convexWalkId = await convex.mutation(api.walks.create, {
-    status: walk.status,
-    startedAt: walk.startedAt,
-    deviceId: walk.deviceId,
-    ...(walk.title ? { title: walk.title } : {}),
-    ...(walk.endedAt !== null ? { endedAt: walk.endedAt } : {}),
-    ...(walk.stats !== null ? { stats: toConvexStats(walk.stats) } : {}),
-  });
+  // 1 – Create or reuse the walk document on the server.
+  // For live walks the Convex document was already created by use-live-walk-sync;
+  // reuse that ID rather than inserting a duplicate.
+  let convexWalkId: string;
 
-  // Update local record so we can skip re-sync on retry
-  updateWalkConvexId(walkId, convexWalkId);
+  if (walk.convexId) {
+    // Live walk already has a server document — patch it to completed state.
+    convexWalkId = walk.convexId;
+    await convex.mutation(api.walks.complete, {
+      walkId: walk.convexId as any,
+      endedAt: walk.endedAt ?? Date.now(),
+      ...(walk.stats !== null ? { stats: toConvexStats(walk.stats) } : {}),
+    });
+  } else {
+    // Normal (non-live) walk — create from scratch.
+    convexWalkId = await convex.mutation(api.walks.create, {
+      status: walk.status,
+      startedAt: walk.startedAt,
+      deviceId: walk.deviceId,
+      ...(walk.title ? { title: walk.title } : {}),
+      ...(walk.endedAt !== null ? { endedAt: walk.endedAt } : {}),
+      ...(walk.stats !== null ? { stats: toConvexStats(walk.stats) } : {}),
+    });
+    updateWalkConvexId(walkId, convexWalkId);
+  }
 
-  // 2 – Upload track points in batches
-  const points = getPointsForWalk(walkId);
-  for (let i = 0; i < points.length; i += BATCH_SIZE) {
-    const batch = points.slice(i, i + BATCH_SIZE);
+  // 2 – Upload remaining track points.
+  // For live walks, most points were already sent by use-live-walk-sync so we
+  // only upload points with synced_at IS NULL. For normal walks, upload all.
+  const pointsToUpload = walk.isLive
+    ? getUnsyncedPointsForWalk(walkId)
+    : getPointsForWalk(walkId);
+
+  // For non-live walks use the checkpoint offset to resume after a partial failure.
+  const startOffset = walk.isLive ? 0 : opts.uploadedPointCount;
+  let confirmedCount = startOffset;
+
+  for (let i = startOffset; i < pointsToUpload.length; i += SYNC_BATCH_SIZE) {
+    const batch = pointsToUpload.slice(i, i + SYNC_BATCH_SIZE);
     await convex.mutation(api.track_points.insertBatch, {
-      walkId: convexWalkId,
+      walkId: convexWalkId as any,
       points: batch.map((p) => ({
         timestamp: p.timestamp,
         latitude: p.latitude,
@@ -81,6 +121,49 @@ export async function uploadWalk(
         ...(p.speedMps !== null ? { speedMps: p.speedMps } : {}),
       })),
     });
+    confirmedCount += batch.length;
+    // Persist checkpoint (non-live) / mark synced (live) after each batch.
+    if (walk.isLive) {
+      markPointsSynced(batch.map((p) => p.id));
+    } else {
+      updateJobProgress(opts.jobId, confirmedCount);
+    }
+  }
+
+  // 3a – Reconciliation: verify server count matches local clean-point count.
+  // This catches any gap caused by a batch that was sent but whose checkpoint
+  // write failed (e.g. app killed between mutation success and SQLite write).
+  const serverCount: number = await convex.query(api.track_points.countForWalk, {
+    walkId: convexWalkId as any,
+  });
+  const localRow = db.getFirstSync<{ cnt: number }>(
+    `SELECT COUNT(*) AS cnt FROM track_points WHERE walk_id = ? AND is_clean = 1`,
+    walkId,
+  );
+  const localCount = localRow?.cnt ?? 0;
+
+  if (serverCount < localCount) {
+    // Re-upload the missing tail using all clean points from the offset.
+    const allCleanPoints = getPointsForWalk(walkId).filter((p) => p.isClean);
+    const missingPoints = allCleanPoints.slice(serverCount);
+    for (let i = 0; i < missingPoints.length; i += SYNC_BATCH_SIZE) {
+      const batch = missingPoints.slice(i, i + SYNC_BATCH_SIZE);
+      await convex.mutation(api.track_points.insertBatch, {
+        walkId: convexWalkId as any,
+        points: batch.map((p) => ({
+          timestamp: p.timestamp,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          accuracyMetres: p.accuracyMetres,
+          isClean: p.isClean,
+          ...(p.altitudeMetres !== null ? { altitudeMetres: p.altitudeMetres } : {}),
+          ...(p.speedMps !== null ? { speedMps: p.speedMps } : {}),
+        })),
+      });
+    }
+    console.log(
+      `[sync] reconciliation: re-uploaded ${localCount - serverCount} missing points for walk ${walkId}`,
+    );
   }
 
   // 3 – Upload photos
@@ -102,7 +185,7 @@ export async function uploadWalk(
     const { storageId } = JSON.parse(uploadResult.body) as { storageId: string };
 
     const convexPhotoId = await convex.mutation(api.walk_photos.create, {
-      walkId: convexWalkId,
+      walkId: convexWalkId as any,
       timestamp: photo.timestamp,
       latitude: photo.latitude,
       longitude: photo.longitude,

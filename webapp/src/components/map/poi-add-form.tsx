@@ -37,6 +37,12 @@ export interface PendingPoi {
   /** Approximate distance from the route start, metres. */
   distanceFromStartMetres?: number;
   order?: number;
+  /** `_id` of an existing `places` document — set when seeding from DB or auto-discovering. */
+  savedPlaceId?: string;
+  /** True when the POI was automatically discovered via proximity search (not manually added). */
+  autoDiscovered?: boolean;
+  /** True when the POI is already linked to the current route (seeded via getByPlannedRoute). */
+  alreadyLinked?: boolean;
 }
 
 // ── Metadata ──────────────────────────────────────────────────────────────────

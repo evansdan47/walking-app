@@ -28,6 +28,8 @@ export interface Walk {
   stats: WalkStats | null;
   convexId: string | null;
   createdAt: number;
+  /** True when the user opted in to Live Broadcast for this walk. */
+  isLive: boolean;
 }
 
 type WalkRow = {
@@ -40,6 +42,7 @@ type WalkRow = {
   stats_json: string | null;
   convex_id: string | null;
   created_at: number;
+  is_live: number;
 };
 
 function rowToWalk(row: WalkRow): Walk {
@@ -53,6 +56,7 @@ function rowToWalk(row: WalkRow): Walk {
     stats: row.stats_json ? (JSON.parse(row.stats_json) as WalkStats) : null,
     convexId: row.convex_id,
     createdAt: row.created_at,
+    isLive: row.is_live === 1,
   };
 }
 
@@ -61,13 +65,15 @@ export function createWalk(walk: {
   title?: string;
   deviceId: string;
   startedAt: number;
+  isLive?: boolean;
 }): void {
   db.runSync(
-    `INSERT INTO walks (id, title, status, started_at, device_id, created_at) VALUES (?, ?, 'recording', ?, ?, ?)`,
+    `INSERT INTO walks (id, title, status, started_at, device_id, is_live, created_at) VALUES (?, ?, 'recording', ?, ?, ?, ?)`,
     walk.id,
     walk.title ?? null,
     walk.startedAt,
     walk.deviceId,
+    walk.isLive ? 1 : 0,
     Date.now(),
   );
 }

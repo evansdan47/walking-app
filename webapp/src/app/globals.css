@@ -38,6 +38,10 @@ body {
   user-select: none;
 }
 
+button {
+  cursor: pointer;
+}
+
 /* Re-enable selection inside any element that explicitly needs it */
 input, textarea, [contenteditable] {
   user-select: text;

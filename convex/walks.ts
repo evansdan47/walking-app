@@ -39,6 +39,7 @@ export const create = mutation({
     endedAt: v.optional(v.number()),
     deviceId: v.string(),
     stats: statsValidator,
+    isLive: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const user = await getAuthUser(ctx);
@@ -49,6 +50,32 @@ export const create = mutation({
       deviceId: args.deviceId,
       ...(args.title !== undefined ? { title: args.title } : {}),
       ...(args.endedAt !== undefined ? { endedAt: args.endedAt } : {}),
+      ...(args.stats !== undefined ? { stats: args.stats } : {}),
+      ...(args.isLive !== undefined ? { isLive: args.isLive } : {}),
+    });
+  },
+});
+
+/**
+ * Finalises a live-broadcast walk on the server: sets status to 'completed',
+ * records endedAt and final stats, and clears isLive so it no longer appears
+ * as an active broadcast.
+ */
+export const complete = mutation({
+  args: {
+    walkId: v.id('walks'),
+    endedAt: v.number(),
+    stats: statsValidator,
+  },
+  handler: async (ctx, args) => {
+    const user = await getAuthUser(ctx);
+    const walk = await ctx.db.get(args.walkId);
+    if (!walk) throw new Error('Walk not found');
+    if (walk.userId.toString() !== user._id.toString()) throw new Error('Forbidden');
+    await ctx.db.patch(args.walkId, {
+      status: 'completed',
+      endedAt: args.endedAt,
+      isLive: false,
       ...(args.stats !== undefined ? { stats: args.stats } : {}),
     });
   },

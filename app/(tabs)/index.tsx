@@ -65,6 +65,7 @@ import { getPointsForWalk } from '@/lib/db/track-points';
 import { listCompletedWalks, type Walk } from '@/lib/db/walks';
 import { haversineMetres } from '@/lib/location/haversine';
 import { processPendingJobs } from '@/lib/sync/sync-manager';
+import { useLiveWalkSync } from '@/hooks/use-live-walk-sync';
 import { randomUUID } from 'expo-crypto';
 
 function useLiveStats(walkId: string | null) {
@@ -145,9 +146,13 @@ type ColorPalette = typeof Colors.light | typeof Colors.dark;
 function WelcomeCard({
   colors,
   onStart,
+  isLiveWalk,
+  onToggleLive,
 }: {
   colors: ColorPalette;
   onStart: () => void;
+  isLiveWalk: boolean;
+  onToggleLive: (value: boolean) => void;
 }) {
   return (
     <View style={welcomeStyles.card}>
@@ -160,12 +165,28 @@ function WelcomeCard({
       <Text style={[welcomeStyles.body, { color: colors.textMuted }]}>
         {"Track your route, distance, pace and altitude in real time.\n\nPut on your walking shoes — your adventure is one tap away!"}
       </Text>
+      <View style={welcomeStyles.liveRow}>
+        <View style={welcomeStyles.liveTextGroup}>
+          <Text style={[welcomeStyles.liveLabel, { color: colors.text }]}>Live Broadcast</Text>
+          <Text style={[welcomeStyles.liveSubLabel, { color: colors.textMuted }]}>
+            Share your location in real time
+          </Text>
+        </View>
+        <Switch
+          value={isLiveWalk}
+          onValueChange={onToggleLive}
+          trackColor={{ false: colors.border, true: colors.success }}
+          thumbColor={colors.background}
+        />
+      </View>
       <TouchableOpacity
-        style={[welcomeStyles.startButton, { backgroundColor: colors.success }]}
+        style={[welcomeStyles.startButton, { backgroundColor: isLiveWalk ? colors.primary : colors.success }]}
         onPress={onStart}
         activeOpacity={0.85}
       >
-        <Text style={welcomeStyles.startButtonText}>Start my walk</Text>
+        <Text style={welcomeStyles.startButtonText}>
+          {isLiveWalk ? 'Start Live Walk' : 'Start my walk'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -189,6 +210,8 @@ function RecordSheetContent({
   stepSource,
   currentLocation,
   start,
+  isLiveWalk,
+  onToggleLive,
   pause,
   resume,
   stop,
@@ -206,7 +229,9 @@ function RecordSheetContent({
   stepCount: number;
   stepSource: import('@/hooks/use-step-counter').StepSource;
   currentLocation: { latitude: number; longitude: number } | null;
-  start: () => Promise<void>;
+  start: (options?: { isLive?: boolean }) => Promise<void>;
+  isLiveWalk: boolean;
+  onToggleLive: (value: boolean) => void;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   stop: (stepCount?: number) => Promise<void>;
@@ -230,7 +255,12 @@ function RecordSheetContent({
           { paddingBottom: insets.bottom + Spacing.base },
         ]}
       >
-        <WelcomeCard colors={colors} onStart={() => { void start(); }} />
+        <WelcomeCard
+          colors={colors}
+          onStart={() => { void start({ isLive: isLiveWalk }); }}
+          isLiveWalk={isLiveWalk}
+          onToggleLive={onToggleLive}
+        />
       </BottomSheetScrollView>
     );
   }
@@ -890,6 +920,12 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const perms = useLocationPermission();
   const { state, pausedDurationMs, start, pause, resume, stop, reset } = useWalkSessionContext();
+
+  // Live Broadcast toggle — user opts in before starting a walk.
+  const [isLiveWalk, setIsLiveWalk] = useState(false);
+
+  // Mount the live-sync hook; it self-gates on isLive and phase.
+  useLiveWalkSync();
   const { isReviewActive, reviewRoute, reviewPhotos, onPhotoTap } = useReviewRoute();
   const { flags, setFlag } = useFeatureFlags();
 
@@ -1209,7 +1245,9 @@ export default function MapScreen() {
             stepCount={stepCount}
             stepSource={stepSource}
             currentLocation={currentLocation}
-            start={start}
+            start={(options) => start(options)}
+            isLiveWalk={isLiveWalk}
+            onToggleLive={setIsLiveWalk}
             pause={pause}
             resume={resume}
             stop={() => stop(stepCountRef.current)}
@@ -1528,5 +1566,25 @@ const welcomeStyles = StyleSheet.create({
     fontFamily: Typography.fontBold,
     fontSize: Typography.sizes.md,
     letterSpacing: 0.3,
+  },
+  liveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: Spacing.xs,
+  },
+  liveTextGroup: {
+    flex: 1,
+    marginRight: Spacing.md,
+  },
+  liveLabel: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.base,
+  },
+  liveSubLabel: {
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.sm,
+    marginTop: 2,
   },
 });

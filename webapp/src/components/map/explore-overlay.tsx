@@ -1316,9 +1316,13 @@ interface SelectedRoutePanelProps {
   routeElevPoints: Array<{ lat: number; lng: number }>;
   routeElevations: number[];
   onElevHoverIdx: (idx: number | null) => void;
+  /** True when the current user is an admin (can edit any route). */
+  isAdmin: boolean;
+  /** Called when the user clicks the Edit button. */
+  onEdit?: () => void;
 }
 
-function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeElevations, onElevHoverIdx }: SelectedRoutePanelProps) {
+function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeElevations, onElevHoverIdx, isAdmin, onEdit }: SelectedRoutePanelProps) {
   const dist = route.stats?.distanceKm ?? 0;
   const elev = route.stats?.elevationGainM ?? 0;
   const { pace } = usePace();
@@ -1400,8 +1404,11 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
               </svg>
               Share
             </button>
-            {route.isOwner && (
-              <button className="flex items-center gap-1.5 flex-1 justify-center py-2 rounded-lg text-xs font-semibold bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors">
+            {(route.isOwner || isAdmin) && (
+              <button
+                onClick={onEdit}
+                className="flex items-center gap-1.5 flex-1 justify-center py-2 rounded-lg text-xs font-semibold bg-gray-50 text-gray-600 hover:bg-gray-100 transition-colors"
+              >
                 <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                   <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
@@ -1525,10 +1532,14 @@ interface ExploreOverlayProps {
   onElevHoverIdx?: (idx: number | null) => void;
   /** Called whenever the active filter changes. Pass null when no filter is active. */
   onFilteredIdsChange?: (ids: Set<string> | null) => void;
+  /** Called when the user clicks Edit on a route they are authorised to edit. */
+  onEditRoute?: (route: EnrichedRoute) => void;
 }
 
-export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onPreviewRoute, routeElevPoints, routeElevations, onElevHoverIdx, onFilteredIdsChange }: ExploreOverlayProps) {
+export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onPreviewRoute, routeElevPoints, routeElevations, onElevHoverIdx, onFilteredIdsChange, onEditRoute }: ExploreOverlayProps) {
   const routes = useQuery(api.planned_routes.listWithinBoundsWithAuthors, viewBounds ?? 'skip') as EnrichedRoute[] | undefined;
+  const currentUser = useQuery(api.users.getCurrentUser);
+  const isAdmin = currentUser?.isAdmin === true;
   const viewingKm = viewBounds ? calcViewingKm(viewBounds) : null;
   const { pace } = usePace();
   const activity = ACTIVITY_PROFILES[pace];
@@ -1602,6 +1613,8 @@ export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onP
           routeElevPoints={routeElevPoints ?? []}
           routeElevations={routeElevations ?? []}
           onElevHoverIdx={onElevHoverIdx ?? (() => {})}
+          isAdmin={isAdmin}
+          onEdit={() => onEditRoute?.(selectedRoute)}
         />
       )}
     </>

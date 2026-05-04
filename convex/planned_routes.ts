@@ -206,3 +206,50 @@ export const listWithinBoundsWithAuthors = query({
     }));
   },
 });
+
+/**
+ * Update an existing planned route. Only the route owner or an admin user may
+ * call this. The authorId and userId fields are preserved unchanged.
+ */
+export const update = mutation({
+  args: {
+    id: v.id('plannedRoutes'),
+    title: v.string(),
+    description: v.optional(v.string()),
+    legs: v.array(legValidator),
+    stats: v.optional(
+      v.object({
+        distanceKm: v.number(),
+        elevationGainM: v.number(),
+      }),
+    ),
+    visibility: v.optional(visibilityValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Not authenticated');
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error('User not found');
+
+    const route = await ctx.db.get(args.id);
+    if (!route) throw new Error('Route not found');
+    if (route.userId !== user._id && user.isAdmin !== true) {
+      throw new Error('Not authorised to edit this route');
+    }
+
+    await ctx.db.patch(args.id, {
+      title: args.title.trim(),
+      legs: args.legs,
+      ...(args.description?.trim() ? { description: args.description.trim() } : { description: undefined }),
+      ...(args.stats !== undefined ? { stats: args.stats } : {}),
+      ...(args.visibility !== undefined ? { visibility: args.visibility } : {}),
+    });
+
+    return args.id;
+  },
+});
