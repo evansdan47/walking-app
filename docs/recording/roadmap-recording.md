@@ -562,64 +562,137 @@ Props:
 
 Post-walk summary inert card. Shows title, date, all stats in a `StatGrid`, and an optional "View on Map" button (disabled in stage one — wired up in stage two). This is the card rendered on the Walk Summary screen straight after recording stops.
 
+### 9.12 `GpsSignalBadge`
+
+**`components/recording/gps-signal-badge.tsx`** ← new (Phase 13b)
+
+```
+Props:
+  accuracyMetres: number | null
+```
+
+Maps raw GPS accuracy to a human-readable signal level:
+
+| Accuracy | Label | Bars |
+|---|---|---|
+| ≤ 10 m | GPS Strong | 4 bars |
+| ≤ 25 m | GPS Good | 3 bars |
+| ≤ 50 m | GPS Weak | 2 bars |
+| > 50 m or null | GPS Searching | 1 bar (animated pulse) |
+
+Rendered as a pill badge on the map overlay, below the recording status pill. Does **not** expose raw metre values to the user. See design decision §3.
+
+### 9.13 `LiveElevationChart`
+
+**`components/recording/live-elevation-chart.tsx`** ← new (Phase 13e)
+
+```
+Props:
+  points: RoutePoint[]   — current accumulated clean route points
+  photos: WalkPhoto[]    — photos taken so far (shown as dots on the profile)
+  stats:  { elevationGainMetres?: number; elevationLossMetres?: number } | null
+```
+
+A live elevation profile that grows in real time as the walk progresses. Built with `react-native-svg`, sharing the same SVG rendering approach as `components/review/elevation-chart.tsx`.
+
+- X axis: cumulative distance (km)
+- Y axis: altitude (m), auto-scaling min/max
+- Green filled area under the line; green stroke line
+- Min / Max / Gain summary labels above the chart
+- Small camera-dot markers at each photo's cumulative distance position
+- Returns `null` when fewer than 2 points have altitude data
+- Refreshes on the same 2-second cadence as the stat grid
+
+### 9.14 `SavePointButton`
+
+**`components/recording/save-point-button.tsx`** ← new (Phase 13f)
+
+```
+Props:
+  walkId:          string
+  currentLocation: { latitude: number; longitude: number } | null
+  disabled?:       boolean
+  onSaved?:        (waypointId: string) => void
+```
+
+A FAB with a bookmark icon. Supports two interactions:
+
+- **Tap**: immediately saves a waypoint at the current location with a default name ("Waypoint at HH:MM"). Light haptic feedback. Brief toast confirms the save.
+- **Long press**: opens a bottom sheet with categorisation options — type (scenic view, summit, rest stop, hazard, other), optional name field, optional note field. Heavy haptic on long press.
+
+Waypoints are stored in a `waypoints` SQLite table (added in Phase 13f). This component is the foundation of the future route-authoring system.
+
 ---
 
-## 10. Screen: Recording (`app/(tabs)/record.tsx`)
+## 10. Screen: Recording (`app/(tabs)/index.tsx`)
 
-> **Architecture change:** The recording screen uses a **map-first layout**. A
-> `MapboxGL.MapView` fills 100 % of the screen and all UI is delivered as a
-> `@gorhom/bottom-sheet` overlay. The session state is read from
-> `useWalkSessionContext()` (a global context provider) rather than calling
-> `useWalkSession()` directly. This requires Phases 8 and 9 to be completed before
-> the screen is migrated from the current flat layout.
+> **Architecture note:** The recording screen is the main map screen (`app/(tabs)/index.tsx`). The record tab is one of three custom tabs delivered via a `@gorhom/bottom-sheet` overlay on the map. There is no dedicated `record.tsx` route.
+>
+> **Design principle (see `docs/design/design-decisions.md`):** The recording screen is *walk-centric, not device-centric*. It communicates the walk experience — terrain, progress, movement — not device internals. Every element must answer: *"does this help the user understand their walk right now?"*
 
 ### Layout
 
 ```
 ┌─────────────────────────────────────────┐
 │  MapboxGL.MapView  (100 % screen)       │
-│  – live position dot                    │
-│  – growing breadcrumb polyline          │
-│                            [PhotoButton]│  ← FAB, visable when recording/paused
+│  – live position dot + accuracy ring    │
+│  – growing route polyline (blue)        │
+│                                         │
+│  [RECORDING  00:47:32]  ← status pill  │
+│  [GPS Strong ████░]     ← signal badge │
+│                                         │
+│                      [📷 Photo]  ← FAB │
+│                  [🔖 Save Point] ← FAB │
+│                      [⊙ Recenter] ← FAB│
 ├─────────────────────────────────────────┤
-│  BottomSheet (snaps over map)           │
+│  BottomSheet (Record tab)               │
 │                                         │
-│  ── Collapsed snap point (~120 dp) ──   │
-│    ElapsedTimer (lg)  •  StatusBadge    │
+│  ── Stat grid (3 × 3) ──────────────── │
+│    Distance    | Elapsed Time | Pace    │
+│    Steps       | Elev Gain    | Elev Loss│
+│    Altitude    | Speed        | Calories │
 │                                         │
-│  ── Expanded snap point ──              │
-│    RecordingStatusBadge                 │
-│    ElapsedTimer (lg, headline)          │
-│    StatGrid (2 col):                    │
-│      DistanceDisplay | PaceDisplay      │
-│      AltitudeDisplay | Accuracy         │
-│    RecordingControls                    │
+│  ── Elevation Profile ──────────────── │
+│    Min 98m  Max 412m  Gain 186m         │
+│    [live SVG chart, grows as you walk]  │
+│    [📷 at km markers where photos taken]│
+│                                         │
+│  ── Action bar ──────────────────────  │
+│    [⏸ Pause]  [■ Stop]  [🔖 Save Point]│
 └─────────────────────────────────────────┘
 ```
 
 ### Visual States (driven by `useWalkSessionContext()`)
 
-### State A — Ready (idle, permissions granted)
-- Map shows user's current or last-known position
-- Bottom sheet at collapsed height
-- `RecordingStatusBadge status="idle"`
-- `RecordingControls phase="idle"` (Start button only in collapsed sheet)
-- No `PhotoButton`
+### State A — Idle (Record tab tapped, not yet recording)
+- No welcome card. No Start button. No confirmation dialog.
+- If permissions are already granted, recording begins immediately on tab tap (see design decision §1 and Phase 13a).
+- If permissions are not yet granted, `PermissionGate` is shown over the map first. Once granted, the next Record tap starts immediately.
+- While in idle between walks (after completing one), the stat grid shows all values at `--` / zero until a new session begins.
 
-### State B — Active (recording or paused)
-- Map shows live position + growing breadcrumb polyline
-- Bottom sheet initially collapsed; user drags up to see full stats
-- `RecordingStatusBadge` pulsing green (`recording`) or amber (`paused`)
-- `ElapsedTimer` ticking in both snap points
-- Full `StatGrid` + `RecordingControls` visible in expanded snap point
-- `PhotoButton` FAB floats above the bottom sheet
+### State B — Recording
+- Red pulsing `RECORDING HH:MM:SS` pill on the map overlay
+- `GpsSignalBadge` below it (Strong / Good / Weak / Searching) — no raw metre values
+- Stat grid: 9 cards live-updating every 2 s (Distance, Elapsed Time, Pace, Steps, Elevation Gain, Elevation Loss, Altitude, Speed, Calories)
+- Live elevation profile chart growing below the stat grid
+- Action bar: **Pause** (grey) + **Stop** (red, prominent) + **Save Point** (green)
+- Photo FAB and Save Point FAB visible on the right side of the map
+- Pause and Stop each show a confirmation dialog before acting
 
-### State C — Completing
-- Brief "Calculating your walk…" modal overlay with activity indicator
-- Fires post-processing then navigates to `walk-review`
+### State C — Paused
+- Amber `PAUSED` badge replaces the recording badge
+- Elapsed timer frozen
+- Action bar: **Resume** (primary green) + **Stop** (red)
+- GPS signal badge hidden; stat grid values frozen
+- Route polyline remains drawn on map
 
-### State D — Permission required
-- `PermissionGate` modal rendered over the map; bottom sheet hidden until granted
+### State D — Completing
+- Sheet closes; full-screen map visible
+- Centred overlay card: spinner + "Calculating your walk…"
+- Post-processing runs; navigates to walk summary on completion
+
+### State E — Permission required
+- `PermissionGate` rendered as a centred modal card over the map; stat grid hidden until granted
 
 ---
 
@@ -639,7 +712,7 @@ Reached automatically after `stop()` completes post-processing. Accessible later
 ```
 app/
   _layout.tsx              ← import background-task.ts; wrap Stack in WalkSessionProvider
-  walk-summary.tsx         ← post-walk summary screen (replaced by walk-review.tsx in Stage 2)
+  walk-summary.tsx         ← walk summary screen (Stage 2)
   (tabs)/
     _layout.tsx            ← render RecordingIndicatorBar above tab bar when recording
     record.tsx             ← recording screen (map-first + bottom sheet after Phase 9)
@@ -818,7 +891,7 @@ Record tab.
 
 ### Phase 11 – Cross-Tab Guard (load walk while recording)
 
-Prevent the user silently overwriting an active recording by opening a saved walk.
+Prevent the user silently overwriting an active recording by opening a saved route.
 
 - [x] In any screen that triggers walk loading (history list tap, review screen
   direct load), read `phase` from `useWalkSessionContext()`
@@ -826,7 +899,7 @@ Prevent the user silently overwriting an active recording by opening a saved wal
   ```ts
   Alert.alert(
     'Recording in progress',
-    'Stop recording before opening a saved walk.',
+    'Stop recording before opening a saved route.',
     [{ text: 'OK' }],
   );
   ```
@@ -838,10 +911,207 @@ navigate to the review screen.
 
 ---
 
-### Phase 12 – Integration & Device Testing
-- [ ] End-to-end test: start → background lock phone → walk 5+ minutes → stop → verify point count in SQLite
-- [ ] Test sync: disable WiFi, record walk, re-enable, confirm Convex receives data
-- [ ] Test force-quit: confirm SQLite data is intact, walk can be viewed in library from local data
+### Phase 12 – Integration & Device Testing ✅
+- [x] End-to-end test: start → background lock phone → walk 5+ minutes → stop → verify point count in SQLite
+- [x] Test sync: disable WiFi, record walk, re-enable, confirm Convex receives data
+- [x] Test force-quit: confirm SQLite data is intact, walk can be viewed in library from local data
+
+> **Known issue:** Walk record on the Convex server can remain in `status: 'recording'` after the walk is completed. The local SQLite record is correctly updated to `'completed'` and the app functions normally, but the server-side status may not reflect the final state. This may have been fixed in source — needs verification after the next sync.
+
+---
+
+## Phase 13 – Recording Screen Redesign
+
+*Implements the 12 design decisions documented in `docs/design/design-decisions.md`.*
+
+Phases 1–12 are all complete. Phase 13 updates the recording screen to match the product vision agreed during the review session: walk-centric UI, immediate start, richer live stats, GPS signal quality, live elevation profile, Save Point, and tab renames.
+
+---
+
+### Phase 13a — Immediate Recording (Remove Welcome Card)
+
+**Design decision §1:** Tapping Record starts recording immediately. No welcome card, no intermediate screen, no Start button.
+
+- [x] Remove the `WelcomeCard` component from `RecordSheetContent` (or `RecordingControls` — whichever renders it).
+- [x] Update the Record tab activation handler: when `phase === 'idle'` and permissions are granted, call `start()` immediately.
+- [x] Remove all "Start my walk" / "Start Live Walk" button rendering paths from `RecordingControls`.
+- [x] If location permissions are not yet granted when the Record tab is tapped, show `PermissionGate` over the map first. Once granted, the next Record tap starts immediately.
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Tap Record. Recording begins within one second. No intermediate card, no confirmation, no separate Start button.
+
+---
+
+### Phase 13b — GPS Signal Quality Badge
+
+**Design decision §3:** Replace raw GPS accuracy values with a human-readable signal quality indicator.
+
+- [x] Create `components/recording/gps-signal-badge.tsx` (see §9.12).
+  - Maps `accuracyMetres` to: Strong (≤10 m) / Good (≤25 m) / Weak (≤50 m) / Searching (>50 m or null).
+  - Renders as a pill with a signal-bar icon (Ionicons or small custom SVG bars).
+  - Animated pulse on "Searching" state.
+- [x] Remove raw accuracy (`±N m`) from the stat grid and any other visible location in the recording screen.
+- [x] Render `GpsSignalBadge` on the map overlay, below the recording status pill.
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Recording screen shows "GPS Strong" (or appropriate level) on the map overlay. No raw metre accuracy values visible anywhere.
+
+---
+
+### Phase 13c — Expanded Stat Grid (9 stats, 3×3)
+
+**Design decision §5:** Add steps, elevation gain/loss, speed, and calories to the live stat grid. Remove battery, storage, and raw GPS accuracy.
+
+Target grid:
+
+| Row | Col 1 | Col 2 | Col 3 |
+|---|---|---|---|
+| 1 | Distance | Elapsed Time | Pace |
+| 2 | Steps | Elevation Gain | Elevation Loss |
+| 3 | Altitude | Speed | Calories |
+
+- [x] Update `RecordSheetContent` stat grid to `columns={3}` with the 9 stat cards above.
+- [x] Wire **Steps** to `useStepCounter()` (existing hook); add `HC` / `D` source badge.
+- [x] Wire **Elevation Gain** and **Elevation Loss** to running totals from the in-memory route point buffer (same smoothed Haversine logic used in post-processing, applied incrementally).
+- [x] Wire **Speed** to the last known GPS `speedMps` value (convert to km/h or mph per unit preference). Show `"--"` when null.
+- [x] Wire **Calories** to a live MET estimate: `MET (3.5) × bodyWeightKg × (movingTimeSecs / 3600)` kcal. Read `bodyWeightKg` from `useUserPreferences()`. Show `"--"` when weight is not set.
+- [x] Remove battery percentage, storage remaining, and raw accuracy from all recording screen rendering paths.
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Recording screen shows nine stat cards in a 3×3 grid. All values update live. No device-internal metrics visible.
+
+---
+
+### Phase 13d — Calories Long-Press Weight Sheet
+
+**Design decision §6:** Long-pressing the Calories card opens a quick weight adjustment sheet without leaving the recording screen.
+
+- [x] Wrap the Calories `StatCard` in a `Pressable` handling both tap and long press.
+- [x] **Tap**: show a brief informational tooltip — `Alert.alert` or small transient toast: "Estimate based on MET 3.5 × body weight. Set weight in Profile for accuracy."
+- [x] **Long press**: open a `BottomSheet` (modal, single snap ~35%) with:
+  - Numeric `TextInput` for body weight in kg.
+  - "Save" button calling `setPreference('bodyWeightKg', value)` then dismissing the sheet.
+  - Note: "Used for calorie estimates during walks."
+  - Pre-filled with current persisted value if one exists.
+- [x] Calorie card updates immediately after weight is saved.
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Long-pressing Calories during recording opens the weight entry sheet. Saving updates the calorie estimate immediately.
+
+---
+
+### Phase 13e — Live Elevation Profile Chart
+
+**Design decision §4:** Display a live elevation profile below the stat grid, growing in real time.
+
+- [x] Create `components/recording/live-elevation-chart.tsx` (see §9.13).
+  - Reuses SVG rendering approach from `components/review/elevation-chart.tsx`.
+  - Accepts current accumulated `RoutePoint[]` and session `WalkPhoto[]`.
+  - Green fill + stroke; min/max dashed reference lines.
+  - Photo markers as small camera-dot overlays at their cumulative distance.
+  - Returns `null` when fewer than 2 points have altitude data (graceful empty state).
+  - Refreshes on the same 2-second cadence as the stat grid.
+- [x] Add a `"ELEVATION PROFILE"` section label above the chart in the sheet content.
+- [x] Add Min / Max / Gain summary row above the chart ("Min 98 m", "Max 412 m", "Gain 186 m").
+- [x] Wire live `RoutePoint[]` from the breadcrumb buffer (already maintained by `LivePositionLayer`) into `LiveElevationChart`.
+- [x] Wire session `WalkPhoto[]` from the current session's SQLite-backed photo list.
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Elevation profile appears during recording after the first altitude-bearing GPS fix. Chart grows as the walk progresses. Photo markers appear when photos are taken. Chart is absent when no altitude data is available.
+
+---
+
+### Phase 13f — Save Point (Tap & Long Press)
+
+**Design decision §7:** Add a Save Point button that supports quick-save on tap and categorisation on long press. Waypoints are stored locally in SQLite.
+
+**Data layer:**
+- [ ] Create `waypoints` table in the SQLite schema:
+  ```sql
+  CREATE TABLE IF NOT EXISTS waypoints (
+    id          TEXT PRIMARY KEY,
+    walk_id     TEXT NOT NULL REFERENCES walks(id),
+    timestamp   INTEGER NOT NULL,
+    latitude    REAL NOT NULL,
+    longitude   REAL NOT NULL,
+    name        TEXT,
+    type        TEXT,   -- 'scenic_view' | 'summit' | 'rest_stop' | 'hazard' | 'other'
+    note        TEXT
+  );
+  ```
+- [x] Add `lib/db/waypoints.ts` with `insertWaypoint(walkId, location, options)` and `getWaypointsForWalk(walkId)`.
+
+**Component:**
+- [x] Create `components/recording/save-point-button.tsx` (see §9.14).
+  - Tap: immediate save, name "Waypoint at HH:MM". Light haptic. Toast confirmation.
+  - Long press: categorisation bottom sheet (type picker + name + note `TextInput`s). Heavy haptic.
+- [x] Add `SavePointButton` FAB to the map overlay right-side stack (below Photo FAB).
+- [x] Add `SavePointButton` to the action bar (right of Stop).
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Tapping Save Point saves a waypoint and shows a confirmation toast. Long pressing opens the categorisation sheet. Waypoints are written correctly to SQLite.
+
+---
+
+### Phase 13g — Tab Navigation Rename (Explore & Sessions)
+
+**Design decisions §8 and §9:** Rename the Home and Library tabs.
+
+| Previous label | New label | File | Rationale |
+|---|---|---|---|
+| Home | Explore | `(tabs)/index.tsx` | Discovery-oriented; the walk history map *is* an exploration surface |
+| Library | Sessions | `(tabs)/library.tsx` | Experiential; each entry is something the user *did* |
+
+- [x] Update tab label text in `app/(tabs)/_layout.tsx`: first tab → `"Explore"` with `compass-outline` icon; third tab → `"Sessions"` with `map-outline` icon (or `footsteps-outline`).
+- [x] Update `RecordingIndicatorBar` (or equivalent) if it references old tab label strings.
+- [x] Check all `router.replace` / `router.push` calls referencing tab routes — ensure they resolve correctly (route paths do not change, only labels).
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Tab bar shows Explore / Record / Sessions / Profile. Navigation between all tabs works. Recording indicator still navigates to Record correctly.
+
+---
+
+### Phase 13h — Action Bar Redesign (Pause / Stop / Save Point)
+
+**Design decision §10:** Three-button action bar during recording. Stop is the most prominent button. Pause and Stop are both confirmation-protected; Save Point is not.
+
+- [x] Update `RecordingControls` recording-phase layout:
+  - **Pause** — left, grey pill, `pause` icon + "Pause" label
+  - **Stop** — centre, red filled pill, `stop` icon + "Stop" label (slightly wider)
+  - **Save Point** — right, green outline pill, `bookmark` icon + "Save Point" label
+- [x] Pause tap → `Alert.alert('Pause recording?', '', [{text: 'Cancel'}, {text: 'Pause', onPress: pause}])`.
+- [x] Stop tap → `Alert.alert('Stop recording?', 'Your walk will be saved.', [{text: 'Cancel'}, {text: 'Stop', style: 'destructive', onPress: stop}])`.
+- [x] Save Point tap → calls `savePoint()` directly (no confirmation, see Phase 13f).
+- [x] Paused-phase layout: **Resume** (left/centre, primary green filled) + **Stop** (right, red outline). No Save Point during pause.
+- [x] `npx tsc --noEmit` — 0 errors.
+
+**Checkpoint:** Action bar shows three buttons during recording. Pause requires confirmation. Stop requires confirmation. Save Point saves immediately. Paused state shows Resume + Stop only.
+
+---
+
+### Phase 13i — Guiding Principles Update
+
+- [ ] Update Section 1 (Guiding Principles) of this document to add:
+  - **Walk-centric, not device-centric.** The recording screen shows walk experience — terrain, progress, movement. Battery, storage, and raw sensor values are not surfaced to the user.
+  - **Immediate recording.** Tapping Record starts recording. No confirmation on start; Pause and Stop are protected.
+  - **Continuity between recording and review.** The live elevation profile uses the same SVG rendering approach as the review elevation chart. Components and data shapes are shared where possible.
+- [x] `npx tsc --noEmit` — 0 errors (no code changes in this work item).
+
+---
+
+### Phase 13 Acceptance Tests
+
+- [x] Tap Record — recording begins immediately. No welcome card, no Start button, no confirmation.
+- [x] Map overlay shows GPS signal quality label ("GPS Strong", etc.). No raw accuracy metres visible.
+- [x] Stat grid shows exactly 9 cards: Distance, Time, Pace, Steps, Elev Gain, Elev Loss, Altitude, Speed, Calories. No battery, storage, or accuracy values.
+- [x] Elevation profile chart appears after the first altitude-bearing GPS fix and grows as the walk progresses.
+- [x] Taking a photo adds a camera-dot marker on the elevation profile chart.
+- [x] Long-pressing Calories opens the weight entry sheet. Saving a weight immediately updates the calorie estimate in the stat card.
+- [x] Tapping Save Point saves a waypoint and shows a toast. Long-pressing opens the categorisation sheet and saves the typed details.
+- [x] Tab bar shows: Explore / Record / Sessions / Profile.
+- [x] Action bar during recording: Pause (grey, left) | Stop (red, centre) | Save Point (green, right).
+- [x] Pausing requires confirmation dialog. Stopping requires confirmation dialog. Starting does not.
+- [x] Paused state shows Resume + Stop only. No Save Point button while paused.
 
 ---
 

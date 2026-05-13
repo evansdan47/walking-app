@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { type ViewStyle } from 'react-native';
 
 import { StatCard } from '@/components/shared/stat-card';
 
@@ -8,6 +9,7 @@ interface ElapsedTimerProps {
   running: boolean;
   size?: 'sm' | 'md' | 'lg';
   align?: 'left' | 'center' | 'right';
+  style?: ViewStyle;
 }
 
 function formatElapsed(ms: number): string {
@@ -24,6 +26,7 @@ export function ElapsedTimer({
   running,
   size = 'md',
   align,
+  style,
 }: ElapsedTimerProps) {
   const [display, setDisplay] = useState('00:00:00');
   const pausedAtRef = useRef<number | null>(null);
@@ -44,5 +47,5 @@ export function ElapsedTimer({
     return undefined;
   }, [running, startedAt, pausedDurationMs]);
 
-  return <StatCard label="Elapsed" value={display} size={size} accent align={align ?? 'center'} />;
+  return <StatCard label="Elapsed" value={display} size={size} accent align={align ?? 'center'} style={style} />;
 }

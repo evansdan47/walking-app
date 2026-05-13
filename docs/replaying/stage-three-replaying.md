@@ -84,7 +84,7 @@ Replaying also introduces the idea of a **follow session** as its own stored obj
 * current progress
 * any off-route events
 
-That gives you a clean separation between the permanent saved walk and the temporary act of following it.
+That gives you a clean separation between the permanent saved route and the temporary act of following it.
 
 One subtle technical challenge is what to do when the walker intentionally leaves the route. For MVP, the answer can be very simple: the app just keeps indicating that they are off-route until they return within threshold. You do not need rerouting or alternate paths. That is important to keep in mind: this is not a driving app trying to compute a new course. It is only comparing the user to a known path.
 
@@ -109,7 +109,7 @@ That is what makes the feature valuable.
 
 If I were defining the replay stage for MVP in one sentence, I would describe it like this:
 
-**A saved walk can be loaded as a route, the user’s live GPS position can be compared against that route, and the app can alert the user if they stray too far from it.**
+**A saved route can be loaded as a route, the user's live GPS position can be compared against that route, and the app can alert the user if they stray too far from it.**
 
 That is the essence of it.
 

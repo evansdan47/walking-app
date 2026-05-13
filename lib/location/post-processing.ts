@@ -84,10 +84,11 @@ export async function runPostProcessing(walkId: string, stepCount?: number): Pro
   let elevationLossMetres: number | undefined;
 
   const pointsWithAlt = clean.filter((p) => p.altitudeMetres !== null);
+  // smoothed is hoisted here so Step 6b can access it outside the altitude guard block.
+  const smoothed: number[] = [];
   if (pointsWithAlt.length / clean.length >= MIN_ALTITUDE_COVERAGE) {
     // Smooth altitudes with a sliding window average
     const alts = clean.map((p) => p.altitudeMetres ?? null);
-    const smoothed: number[] = [];
     for (let i = 0; i < alts.length; i++) {
       const half = Math.floor(ELEVATION_SMOOTH_WINDOW / 2);
       const slice = alts.slice(
@@ -111,6 +112,74 @@ export async function runPostProcessing(walkId: string, stepCount?: number): Pro
     elevationLossMetres = Math.round(loss);
   }
 
+  // Step 6b – Elevation detail: longest ascent/descent runs + steepest gradient
+  // These are only computed when we already have enough altitude data (same guard).
+  let longestAscentMetres: number | undefined;
+  let longestDescentMetres: number | undefined;
+  let steepestAscentGradientPct: number | undefined;
+  let steepestDescentGradientPct: number | undefined;
+
+  const nSmoothed = Math.min(smoothed.length, clean.length);
+  if (nSmoothed >= 2) {
+    // --- Longest continuous ascent/descent run (by vertical metres) ---
+    type RunDir = 'ascent' | 'descent';
+    let runDir: RunDir | null = null;
+    let runVertical = 0;
+    let bestAscent = 0;
+    let bestDescent = 0;
+
+    for (let i = 1; i < nSmoothed; i++) {
+      const delta = smoothed[i]! - smoothed[i - 1]!;
+      if (Math.abs(delta) < 0.5) continue; // ignore sub-0.5 m noise
+      const dir: RunDir = delta > 0 ? 'ascent' : 'descent';
+      if (dir === runDir) {
+        runVertical += Math.abs(delta);
+      } else {
+        if (runDir === 'ascent') bestAscent = Math.max(bestAscent, runVertical);
+        else if (runDir === 'descent') bestDescent = Math.max(bestDescent, runVertical);
+        runDir = dir;
+        runVertical = Math.abs(delta);
+      }
+    }
+    // Capture the final run
+    if (runDir === 'ascent') bestAscent = Math.max(bestAscent, runVertical);
+    else if (runDir === 'descent') bestDescent = Math.max(bestDescent, runVertical);
+
+    if (bestAscent > 0) longestAscentMetres = Math.round(bestAscent);
+    if (bestDescent > 0) longestDescentMetres = Math.round(bestDescent);
+
+    // --- Steepest gradient over a 50 m horizontal sliding window ---
+    // Pre-compute horizontal distances between consecutive clean points.
+    const GRADIENT_WINDOW_M = 50;
+    const horizDist: number[] = [0]; // horizDist[i] = dist from clean[i-1] to clean[i]
+    for (let i = 1; i < nSmoothed; i++) {
+      horizDist.push(haversineMetres(
+        clean[i - 1]!.latitude, clean[i - 1]!.longitude,
+        clean[i]!.latitude,     clean[i]!.longitude,
+      ));
+    }
+
+    let maxAscentGrad = 0;
+    let maxDescentGrad = 0;
+
+    for (let start = 0; start < nSmoothed - 1; start++) {
+      let cumHoriz = 0;
+      for (let end = start + 1; end < nSmoothed; end++) {
+        cumHoriz += horizDist[end]!;
+        if (cumHoriz >= GRADIENT_WINDOW_M) {
+          const vertChange = smoothed[end]! - smoothed[start]!;
+          const grad = (Math.abs(vertChange) / cumHoriz) * 100;
+          if (vertChange > 0) maxAscentGrad = Math.max(maxAscentGrad, grad);
+          else if (vertChange < 0) maxDescentGrad = Math.max(maxDescentGrad, grad);
+          break;
+        }
+      }
+    }
+
+    if (maxAscentGrad > 0) steepestAscentGradientPct = Math.round(maxAscentGrad * 10) / 10;
+    if (maxDescentGrad > 0) steepestDescentGradientPct = Math.round(maxDescentGrad * 10) / 10;
+  }
+
   // Step 7 – Save initial stats (without HC data — written before the async HC calls)
   const stats: WalkStats = {
     distanceMetres: Math.round(distanceMetres),
@@ -121,6 +190,10 @@ export async function runPostProcessing(walkId: string, stepCount?: number): Pro
     ...(avgPaceSecsPerKm !== undefined ? { avgPaceSecsPerKm } : {}),
     ...(elevationGainMetres !== undefined ? { elevationGainMetres } : {}),
     ...(elevationLossMetres !== undefined ? { elevationLossMetres } : {}),
+    ...(longestAscentMetres !== undefined ? { longestAscentMetres } : {}),
+    ...(steepestAscentGradientPct !== undefined ? { steepestAscentGradientPct } : {}),
+    ...(longestDescentMetres !== undefined ? { longestDescentMetres } : {}),
+    ...(steepestDescentGradientPct !== undefined ? { steepestDescentGradientPct } : {}),
     ...(stepCount !== undefined ? { stepCount } : {}),
   };
   updateWalkStats(walkId, stats);

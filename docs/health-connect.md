@@ -210,7 +210,7 @@ For MVP, **Path A** is the lower-effort option: query and display if available, 
 Health Connect, read `HeartRateRecord` over the walk time range during post-processing
 and store `avgHeartRate` / `maxHeartRate` in `stats_json`.
 
-Display them as `StatCard`s on the walk review screen:
+Display them as `StatCard`s on the walk summary screen:
 - `AVG HR — 142 bpm`
 - `MAX HR — 168 bpm`
 
@@ -367,7 +367,7 @@ approach is sensible:
 - In `lib/sync/upload-walk.ts` (after Convex upload), call
   `writeExerciseSession(walk, cleanPoints)`
 - Walk appears in Health Connect app / Strava / Google Fit
-- Add a `StatCard` or badge on the walk review screen: "Synced to Health Connect ✓"
+- Add a `StatCard` or badge on the walk summary screen: "Synced to Health Connect ✓"
 
 **Checkpoint:** Completed walk appears in the Android Health Connect app with the
 correct route, duration, and distance.
@@ -382,7 +382,7 @@ correct route, duration, and distance.
 - Store in `stats_json`: `caloriesKcal`, `avgHeartRateBpm`, `maxHeartRateBpm`
 - Display as `StatCard`s on the review screen
 
-**Checkpoint:** Walk review shows calories and heart rate for users who have a connected
+**Checkpoint:** Walk summary shows calories and heart rate for users who have a connected
 wearable or a paired fitness app.
 
 ---

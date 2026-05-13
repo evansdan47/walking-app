@@ -167,3 +167,11 @@ What you’ve designed is actually very coherent:
 offline-first
 low distraction
 real-world walking behaviour
+
+---
+
+## 🚀 Pre-Release Checklist (closing-stage tasks)
+
+> Items to review before final public release — not to implement early.
+
+- [ ] **R8 / ProGuard** — Currently disabled (`minifyEnabled false` in `android/app/build.gradle`). Before release, evaluate enabling R8 (`minifyEnabled true` + `shrinkResources true`) to reduce AAB size (typically 20–40%) and allow mapping file upload to Play Console (makes crash stack traces readable in Android Vitals). Requires regression testing — React Native apps may need keep rules to prevent R8 stripping live code.

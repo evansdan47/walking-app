@@ -42,7 +42,7 @@ function rowToPoint(row: TrackPointRow): TrackPoint {
   };
 }
 
-export function insertPoint(point: Omit<TrackPoint, 'isClean'>): void {
+export function insertPoint(point: Omit<TrackPoint, 'isClean' | 'syncedAt'>): void {
   db.runSync(
     `INSERT INTO track_points (id, walk_id, timestamp, latitude, longitude, altitude_metres, speed_mps, accuracy_metres, is_clean)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
@@ -63,6 +63,41 @@ export function getPointsForWalk(walkId: string): TrackPoint[] {
     walkId,
   );
   return rows.map(rowToPoint);
+}
+
+/**
+ * Returns a downsampled list of [longitude, latitude] pairs for rendering a
+ * route thumbnail. Uses every Nth clean point so the result has at most
+ * `maxPoints` entries, preserving the start and end points.
+ */
+export function getRouteCoordinatesForWalk(
+  walkId: string,
+  maxPoints = 60,
+): [number, number][] {
+  // Prefer clean points; fall back to all points.
+  const allRows = db.getAllSync<TrackPointRow>(
+    `SELECT latitude, longitude FROM track_points WHERE walk_id = ? AND is_clean = 1 ORDER BY timestamp ASC`,
+    walkId,
+  );
+  const rows =
+    allRows.length > 0
+      ? allRows
+      : db.getAllSync<TrackPointRow>(
+          `SELECT latitude, longitude FROM track_points WHERE walk_id = ? ORDER BY timestamp ASC`,
+          walkId,
+        );
+
+  if (rows.length === 0) return [];
+  if (rows.length <= maxPoints) return rows.map((r) => [r.longitude, r.latitude]);
+
+  const step = (rows.length - 1) / (maxPoints - 1);
+  const sampled: [number, number][] = [];
+  for (let i = 0; i < maxPoints; i++) {
+    const idx = Math.round(i * step);
+    const row = rows[Math.min(idx, rows.length - 1)]!;
+    sampled.push([row.longitude, row.latitude]);
+  }
+  return sampled;
 }
 
 export function markPointsClean(ids: string[]): void {

@@ -4,7 +4,7 @@ From a product and technical point of view, the **reviewing layer** is where the
 
 The core technical idea is simple: a completed walk is reconstructed from its stored points and events. You already have the breadcrumbs — timestamped coordinates, plus optional altitude, speed, and photos. Reviewing is the process of loading that stored data, rebuilding the route, calculating or displaying summary metrics, and presenting it in a way that feels coherent to the user.
 
-The first important design choice is that **reviewing should operate on completed or snapshot data, not on a live recording stream**. That keeps it much simpler. A walk should be treated as a stable object once stopped, even if some background sync or summary calculation happens a little later. In practice, this means the user opens a saved walk and the app loads:
+The first important design choice is that **reviewing should operate on completed or snapshot data, not on a live recording stream**. That keeps it much simpler. A walk should be treated as a stable object once stopped, even if some background sync or summary calculation happens a little later. In practice, this means the user opens a saved route and the app loads:
 
 * the walk metadata
 * the ordered track points
@@ -66,7 +66,7 @@ One of the strongest product choices you have already made is that **maps are on
 
 That makes the review subsystem easier to isolate:
 
-* map loads only when opening a saved walk
+* map loads only when opening a saved route
 * route overlay is drawn from stored data
 * photos and markers are layered on top
 * everything else is just presentation logic

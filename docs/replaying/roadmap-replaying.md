@@ -390,10 +390,10 @@ with `route_point_count < MIN_FOLLOWABLE_POINTS`.
 
 ### 8.1 `app/walk-follow.tsx` — Follow Screen
 
-A stack screen — identical layout approach to `walk-review.tsx`.
+A stack screen — identical layout approach to `walk-summary.tsx`.
 
 **Entry points:**
-1. From `app/walk-review.tsx`: "Follow this route" action button in `WalkActionBar`.
+1. From `app/walk-summary.tsx`: "Follow this route" action button in `WalkActionBar`.
 2. Could later be reached from a dedicated "Follow" tab if the Library list grows
    a follow CTA — not in MVP.
 
@@ -476,7 +476,7 @@ function handleBack() {
 
 ---
 
-## 9. Review Screen Changes (`app/walk-review.tsx`)
+## 9. Walk Summary Screen Changes (`app/walk-summary.tsx`)
 
 One addition to the existing `WalkActionBar` component:
 
@@ -579,7 +579,7 @@ starts. Bottom sheet opens at collapsed snap point. Session starts automatically
 ### Phase 5 — Review Screen Integration
 
 19. Add `onFollow` prop to `components/review/walk-action-bar.tsx`.
-20. Load clean point count in `app/walk-review.tsx` to determine `followable` bool.
+20. Load clean point count in `app/walk-summary.tsx` to determine `followable` bool.
 21. Pass `followable` and `onFollow` to `WalkActionBar`.
 22. `onFollow` navigates to `/walk-follow?walkId=...`.
 23. `npx tsc --noEmit` — 0 errors.

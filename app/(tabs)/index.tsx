@@ -1,40 +1,50 @@
 import { useAuth, useUser } from '@clerk/expo';
+import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetFlatList, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useConvex, useMutation } from 'convex/react';
 import Constants from 'expo-constants';
+import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  AppState,
-  Dimensions,
-  Linking,
-  Pressable,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  useWindowDimensions,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    AppState,
+    BackHandler,
+    Dimensions,
+    LayoutAnimation,
+    Linking,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    UIManager,
+    useWindowDimensions,
+    View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { LivePositionLayer } from '@/components/map/live-position-layer';
 import { AltitudeDisplay } from '@/components/recording/altitude-display';
 import { DistanceDisplay } from '@/components/recording/distance-display';
+import { DraggableStatGrid, type StatPanel } from '@/components/recording/draggable-stat-grid';
 import { ElapsedTimer } from '@/components/recording/elapsed-timer';
+import { LiveElevationChart } from '@/components/recording/live-elevation-chart';
 import { PaceDisplay } from '@/components/recording/pace-display';
 import { PhotoFab } from '@/components/recording/photo-button';
 import { RecordingControls } from '@/components/recording/recording-controls';
 import { RecordingStatusBadge } from '@/components/recording/recording-status-badge';
+import { SavePointButton } from '@/components/recording/save-point-button';
 import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
 import { HistoryWalkCard } from '@/components/review/history-walk-card';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
-import { StatGrid } from '@/components/shared/stat-grid';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { RouteColourPicker } from '@/components/ui/route-colour-picker';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
@@ -46,13 +56,15 @@ import { useFeatureFlags } from '@/hooks/use-feature-flags';
 import { useLocationPermission } from '@/hooks/use-location-permission';
 import { useRouteColours } from '@/hooks/use-route-colours';
 import { useStepCounter } from '@/hooks/use-step-counter';
+import { DEFAULT_STAT_PANEL_ORDER, useUserPreferences } from '@/hooks/use-user-preferences';
+import { getPhotosForWalk, type WalkPhoto } from '@/lib/db/walk-photos';
 import {
-  checkHealthConnectPermissions,
-  isHealthConnectAvailable,
-  isHealthConnectUpdateRequired,
-  openHealthConnectAppSettings,
-  openHealthConnectMainSettings,
-  requestHealthConnectPermissions,
+    checkHealthConnectPermissions,
+    isHealthConnectAvailable,
+    isHealthConnectUpdateRequired,
+    openHealthConnectAppSettings,
+    openHealthConnectMainSettings,
+    requestHealthConnectPermissions,
 } from '@/lib/health-connect';
 import { sheetEvents } from '@/lib/ui/sheet-events';
 import Slider from '@react-native-community/slider';
@@ -60,13 +72,18 @@ import MapboxGL from '@rnmapbox/maps';
 import { useCameraPermissions } from 'expo-camera';
 import { Pedometer } from 'expo-sensors';
 
+import { useLiveWalkSync } from '@/hooks/use-live-walk-sync';
 import { ensurePendingSyncJob } from '@/lib/db/sync-jobs';
 import { getPointsForWalk } from '@/lib/db/track-points';
 import { listCompletedWalks, type Walk } from '@/lib/db/walks';
 import { haversineMetres } from '@/lib/location/haversine';
 import { processPendingJobs } from '@/lib/sync/sync-manager';
-import { useLiveWalkSync } from '@/hooks/use-live-walk-sync';
 import { randomUUID } from 'expo-crypto';
+
+// Enable LayoutAnimation on Android (required for accordion animation)
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 function useLiveStats(walkId: string | null) {
   const [distanceMetres, setDistanceMetres] = useState(0);
@@ -75,6 +92,11 @@ function useLiveStats(walkId: string | null) {
   const [accuracy, setAccuracy] = useState<number | null>(null);
   const [pointCount, setPointCount] = useState(0);
   const [coordinates, setCoordinates] = useState<[number, number][]>([]);
+  const [elevationGainMetres, setElevationGainMetres] = useState(0);
+  const [elevationLossMetres, setElevationLossMetres] = useState(0);
+  const [lastSpeedMps, setLastSpeedMps] = useState<number | null>(null);
+  const [trackPoints, setTrackPoints] = useState<import('@/lib/db/track-points').TrackPoint[]>([]);
+  const [sessionPhotos, setSessionPhotos] = useState<WalkPhoto[]>([]);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -84,18 +106,29 @@ function useLiveStats(walkId: string | null) {
       setLastAltitude(null);
       setPointCount(0);
       setCoordinates([]);
+      setElevationGainMetres(0);
+      setElevationLossMetres(0);
+      setLastSpeedMps(null);
+      setTrackPoints([]);
+      setSessionPhotos([]);
       return;
     }
 
     const refresh = () => {
       const points = getPointsForWalk(walkId);
       setPointCount(points.length);
+      setTrackPoints(points);
       setCoordinates(points.map((p) => [p.longitude, p.latitude]));
+
+      // Refresh photos for elevation chart markers
+      setSessionPhotos(getPhotosForWalk(walkId));
+
       if (points.length === 0) return;
 
       const last = points[points.length - 1]!;
       setLastAltitude(last.altitudeMetres);
       setAccuracy(last.accuracyMetres);
+      setLastSpeedMps(last.speedMps);
 
       if (points.length < 2) return;
 
@@ -115,6 +148,18 @@ function useLiveStats(walkId: string | null) {
       if (dist > 100 && durationSec > 0) {
         setPaceSecsPerKm(durationSec / (dist / 1000));
       }
+
+      // Elevation gain/loss from altitude-bearing points
+      const altPoints = points.filter((p) => p.altitudeMetres !== null);
+      let gain = 0;
+      let loss = 0;
+      for (let i = 1; i < altPoints.length; i++) {
+        const diff = altPoints[i]!.altitudeMetres! - altPoints[i - 1]!.altitudeMetres!;
+        if (diff > 0) gain += diff;
+        else loss -= diff;
+      }
+      setElevationGainMetres(gain);
+      setElevationLossMetres(loss);
     };
 
     refresh();
@@ -124,14 +169,26 @@ function useLiveStats(walkId: string | null) {
     };
   }, [walkId]);
 
-  return { distanceMetres, paceSecsPerKm, lastAltitude, accuracy, pointCount, coordinates };
+  return {
+    distanceMetres,
+    paceSecsPerKm,
+    lastAltitude,
+    accuracy,
+    pointCount,
+    coordinates,
+    elevationGainMetres,
+    elevationLossMetres,
+    lastSpeedMps,
+    trackPoints,
+    sessionPhotos,
+  };
 }
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type SheetTab = 'record' | 'library' | 'profile';
+type SheetTab = 'plan' | 'record' | 'explore' | 'sessions' | 'profile';
 
 // ---------------------------------------------------------------------------
 // Sheet content components
@@ -143,58 +200,135 @@ type ColorPalette = typeof Colors.light | typeof Colors.dark;
 // Idle welcome card (shown when no session is active)
 // ---------------------------------------------------------------------------
 
-function WelcomeCard({
-  colors,
-  onStart,
-  isLiveWalk,
-  onToggleLive,
-}: {
-  colors: ColorPalette;
-  onStart: () => void;
-  isLiveWalk: boolean;
-  onToggleLive: (value: boolean) => void;
-}) {
-  return (
-    <View style={welcomeStyles.card}>
-      <View style={[welcomeStyles.iconCircle, { backgroundColor: colors.successMuted }]}>
-        <IconSymbol name="figure.walk" size={64} color={colors.success} />
-      </View>
-      <Text style={[welcomeStyles.headline, { color: colors.text }]}>
-        Ready for a walk?
-      </Text>
-      <Text style={[welcomeStyles.body, { color: colors.textMuted }]}>
-        {"Track your route, distance, pace and altitude in real time.\n\nPut on your walking shoes — your adventure is one tap away!"}
-      </Text>
-      <View style={welcomeStyles.liveRow}>
-        <View style={welcomeStyles.liveTextGroup}>
-          <Text style={[welcomeStyles.liveLabel, { color: colors.text }]}>Live Broadcast</Text>
-          <Text style={[welcomeStyles.liveSubLabel, { color: colors.textMuted }]}>
-            Share your location in real time
-          </Text>
-        </View>
-        <Switch
-          value={isLiveWalk}
-          onValueChange={onToggleLive}
-          trackColor={{ false: colors.border, true: colors.success }}
-          thumbColor={colors.background}
-        />
-      </View>
-      <TouchableOpacity
-        style={[welcomeStyles.startButton, { backgroundColor: isLiveWalk ? colors.primary : colors.success }]}
-        onPress={onStart}
-        activeOpacity={0.85}
-      >
-        <Text style={welcomeStyles.startButtonText}>
-          {isLiveWalk ? 'Start Live Walk' : 'Start my walk'}
-        </Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Record sheet content
 // ---------------------------------------------------------------------------
+
+function formatWaypointTime(ms: number): string {
+  const d = new Date(ms);
+  const h = d.getHours().toString().padStart(2, '0');
+  const m = d.getMinutes().toString().padStart(2, '0');
+  return `${h}:${m}`;
+}
+
+function buildStatPanels({
+  distanceMetres,
+  paceSecsPerKm,
+  stepCount,
+  stepSource,
+  elevationGainMetres,
+  elevationLossMetres,
+  displayAltitude,
+  speedKmh,
+  caloriesKcal,
+  bodyWeightKg,
+  trackPoints,
+  sessionPhotos,
+}: {
+  distanceMetres: number;
+  paceSecsPerKm: number | undefined;
+  stepCount: number;
+  stepSource: import('@/hooks/use-step-counter').StepSource;
+  elevationGainMetres: number;
+  elevationLossMetres: number;
+  displayAltitude: number | null;
+  speedKmh: string | null;
+  caloriesKcal: number | null;
+  bodyWeightKg: number | null;
+  trackPoints: import('@/lib/db/track-points').TrackPoint[];
+  sessionPhotos: WalkPhoto[];
+}): StatPanel[] {
+  return [
+    {
+      key: 'distance',
+      node: <DistanceDisplay distanceMetres={distanceMetres} />,
+    },
+    {
+      key: 'pace',
+      node: <PaceDisplay paceSecsPerKm={paceSecsPerKm} />,
+    },
+    {
+      key: 'steps',
+      node: (
+        <StatCard
+          label="Steps"
+          value={stepCount > 0 ? stepCount.toLocaleString() : '--'}
+          {...(stepSource != null && { unit: stepSource === 'hc' ? 'HC' : 'D' })}
+          size="md"
+          align="center"
+        />
+      ),
+    },
+    {
+      key: 'elevGain',
+      node: (
+        <StatCard
+          label="Elev Gain"
+          value={elevationGainMetres > 0 ? String(Math.round(elevationGainMetres)) : '--'}
+          {...(elevationGainMetres > 0 && { unit: 'm' })}
+          size="md"
+          align="center"
+        />
+      ),
+    },
+    {
+      key: 'elevLoss',
+      node: (
+        <StatCard
+          label="Elev Loss"
+          value={elevationLossMetres > 0 ? String(Math.round(elevationLossMetres)) : '--'}
+          {...(elevationLossMetres > 0 && { unit: 'm' })}
+          size="md"
+          align="center"
+        />
+      ),
+    },
+    {
+      key: 'altitude',
+      node: <AltitudeDisplay altitudeMetres={displayAltitude} />,
+    },
+    {
+      key: 'speed',
+      node: (
+        <StatCard
+          label="Speed"
+          value={speedKmh ?? '--'}
+          {...(speedKmh != null && { unit: 'km/h' })}
+          size="md"
+          align="center"
+        />
+      ),
+    },
+    {
+      key: 'calories',
+      node: (
+        <StatCard
+          label="Calories"
+          value={caloriesKcal != null ? String(caloriesKcal) : '--'}
+          {...(caloriesKcal != null && { unit: 'kcal' })}
+          size="md"
+          align="center"
+        />
+      ),
+      onPress: () => {
+        Alert.alert(
+          'Active Calories',
+          `Estimate based on MET 3.5 × body weight.${bodyWeightKg == null ? '\n\nSet your weight in Profile to enable.' : ''}`,
+        );
+      },
+    },
+    {
+      key: 'elevation',
+      fullWidth: true,
+      node: (
+        <View>
+          <Text style={sheetStyles.sectionLabel}>ELEVATION PROFILE</Text>
+          <LiveElevationChart points={trackPoints} photos={sessionPhotos} />
+        </View>
+      ),
+    },
+  ];
+}
 
 function RecordSheetContent({
   colors,
@@ -204,14 +338,19 @@ function RecordSheetContent({
   distanceMetres,
   paceSecsPerKm,
   displayAltitude,
-  displayAccuracy,
   pointCount,
   stepCount,
   stepSource,
   currentLocation,
-  start,
-  isLiveWalk,
-  onToggleLive,
+  elevationGainMetres,
+  elevationLossMetres,
+  lastSpeedMps,
+  trackPoints,
+  sessionPhotos,
+  bodyWeightKg,
+  onSetBodyWeight,
+  statPanelOrder,
+  onStatPanelReorder,
   pause,
   resume,
   stop,
@@ -224,19 +363,26 @@ function RecordSheetContent({
   distanceMetres: number;
   paceSecsPerKm: number | undefined;
   displayAltitude: number | null;
-  displayAccuracy: number | null;
   pointCount: number;
   stepCount: number;
   stepSource: import('@/hooks/use-step-counter').StepSource;
   currentLocation: { latitude: number; longitude: number } | null;
-  start: (options?: { isLive?: boolean }) => Promise<void>;
-  isLiveWalk: boolean;
-  onToggleLive: (value: boolean) => void;
+  elevationGainMetres: number;
+  elevationLossMetres: number;
+  lastSpeedMps: number | null;
+  trackPoints: import('@/lib/db/track-points').TrackPoint[];
+  sessionPhotos: WalkPhoto[];
+  bodyWeightKg: number | null;
+  onSetBodyWeight: (kg: number) => void;
+  statPanelOrder: string[];
+  onStatPanelReorder: (keys: string[]) => void;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   stop: (stepCount?: number) => Promise<void>;
   reset: () => void;
 }) {
+  const stopCountRef = useRef(0);
+
   // Auto-reset to idle if we arrive here after a session completed
   useEffect(() => {
     if (state.phase === 'completed') {
@@ -244,31 +390,12 @@ function RecordSheetContent({
     }
   }, [state.phase, reset]);
 
-  const isActive = state.phase === 'recording' || state.phase === 'paused';
-
-  // Idle / completed → show welcome card
-  if (!isActive && state.phase !== 'completing') {
-    return (
-      <BottomSheetScrollView
-        contentContainerStyle={[
-          sheetStyles.content,
-          { paddingBottom: insets.bottom + Spacing.base },
-        ]}
-      >
-        <WelcomeCard
-          colors={colors}
-          onStart={() => { void start({ isLive: isLiveWalk }); }}
-          isLiveWalk={isLiveWalk}
-          onToggleLive={onToggleLive}
-        />
-      </BottomSheetScrollView>
-    );
-  }
-
-  // Completing → brief spinner (overlay covers most of it, but sheet may peek)
+  // Completing → brief spinner
   if (state.phase === 'completing') {
     return (
-      <BottomSheetScrollView contentContainerStyle={[sheetStyles.content, { paddingBottom: Spacing.base, alignItems: 'center' as const }]}>
+      <BottomSheetScrollView
+        contentContainerStyle={[sheetStyles.content, { paddingBottom: Spacing.base, alignItems: 'center' as const }]}
+      >
         <ActivityIndicator color={colors.primary} style={{ marginTop: Spacing.xl }} />
         <Text style={[sheetStyles.debugText, { color: colors.textMuted, marginTop: Spacing.sm }]}>
           Saving your walk…
@@ -277,59 +404,86 @@ function RecordSheetContent({
     );
   }
 
-  // Active (recording / paused) → full stats view
+  // Compute live stats
+  const startedAt =
+    state.phase === 'recording' || state.phase === 'paused'
+      ? (state as { startedAt: number }).startedAt
+      : 0;
+  const elapsedSecs = startedAt > 0 ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+  const movingTimeSecs = Math.max(0, elapsedSecs - pausedDurationMs / 1000);
+  const caloriesKcal =
+    bodyWeightKg != null && movingTimeSecs > 0
+      ? Math.round(3.5 * bodyWeightKg * (movingTimeSecs / 3600))
+      : null;
+  const speedKmh = lastSpeedMps != null ? (lastSpeedMps * 3.6).toFixed(1) : null;
+  const walkId =
+    state.phase === 'recording' || state.phase === 'paused' ? state.walkId : null;
+
+  // Idle or active → show stat grid (zeros when idle)
   return (
-    <BottomSheetScrollView
-      contentContainerStyle={[
-        sheetStyles.content,
-        { paddingBottom: insets.bottom + Spacing.base },
-      ]}
-    >
-      <View style={sheetStyles.section}>
-        <StatGrid>
-          <ElapsedTimer
-            startedAt={(state as { startedAt: number }).startedAt}
-            pausedDurationMs={pausedDurationMs}
-            running={state.phase === 'recording'}
-            size="sm"
-          />
-          <StatCard
-            label="Step Count"
-            value={stepCount > 0 ? String(stepCount) : '--'}
-            {...(stepSource != null && { unit: stepSource === 'hc' ? 'HC' : 'D' })}
-            size="sm"
-            align="center"
-          />
-          <DistanceDisplay distanceMetres={distanceMetres} />
-          <PaceDisplay paceSecsPerKm={paceSecsPerKm} />
-          <AltitudeDisplay altitudeMetres={displayAltitude} />
-          <StatCard
-            label="GPS Accuracy"
-            value={displayAccuracy != null ? `±${Math.round(displayAccuracy)}` : '--'}
-            {...(displayAccuracy != null ? { unit: 'm' } : {})}
-            size="sm"
-            align="center"
-          />
-        </StatGrid>
+    <>
+      {/* Fixed header — always visible regardless of sheet height */}
+      <View style={[sheetStyles.recordFixedHeader, { borderBottomColor: colors.border }]}>
+        {/* Full-width elapsed timer */}
+        <ElapsedTimer
+          startedAt={startedAt}
+          pausedDurationMs={pausedDurationMs}
+          running={state.phase === 'recording'}
+          size="lg"
+          style={{ minHeight: 100, flex: 0 }}
+        />
+
+        {/* Pause / Stop / Resume buttons */}
         <RecordingControls
           phase={state.phase}
-          onStart={() => { void start(); }}
           onPause={() => { void pause(); }}
           onResume={() => { void resume(); }}
-          onStop={() => { void stop(); }}
+          onStop={() => { void stop(stopCountRef.current); }}
         />
-        <View style={sheetStyles.debugRow}>
-          <Text style={[sheetStyles.debugText, { color: colors.textMuted }]}>
-            pts: {pointCount}
-          </Text>
-          <Text style={[sheetStyles.debugText, { color: colors.textMuted }]}>
-            {currentLocation
-              ? `${currentLocation.latitude.toFixed(4)}, ${currentLocation.longitude.toFixed(4)}`
-              : 'no fix'}
-          </Text>
-        </View>
       </View>
-    </BottomSheetScrollView>
+
+      {/* Scrollable stats area */}
+      <BottomSheetScrollView
+        contentContainerStyle={[
+          sheetStyles.content,
+          { paddingBottom: insets.bottom + Spacing.base },
+        ]}
+      >
+        <View style={sheetStyles.section}>
+          {/* 2-col draggable stat grid */}
+          <DraggableStatGrid
+            panels={buildStatPanels({
+              distanceMetres,
+              paceSecsPerKm,
+              stepCount,
+              stepSource,
+              elevationGainMetres,
+              elevationLossMetres,
+              displayAltitude,
+              speedKmh,
+              caloriesKcal,
+              bodyWeightKg,
+              trackPoints,
+              sessionPhotos,
+            })}
+            order={statPanelOrder}
+            onReorder={onStatPanelReorder}
+          />
+
+          {/* Debug row */}
+          <View style={sheetStyles.debugRow}>
+            <Text style={[sheetStyles.debugText, { color: colors.textMuted }]}>
+              pts: {pointCount}
+            </Text>
+            <Text style={[sheetStyles.debugText, { color: colors.textMuted }]}>
+              {currentLocation
+                ? `${currentLocation.latitude.toFixed(4)}, ${currentLocation.longitude.toFixed(4)}`
+                : 'no fix'}
+            </Text>
+          </View>
+        </View>
+      </BottomSheetScrollView>
+    </>
   );
 }
 
@@ -372,11 +526,11 @@ function HistorySheetContent({
 
   const handleWalkPress = (walkId: string) => {
     if (!allowDuringRecording && (state.phase === 'recording' || state.phase === 'paused')) {
-      Alert.alert('Recording in progress', 'Stop your current walk before opening a saved walk.', [{ text: 'OK' }]);
+      Alert.alert('Recording in progress', 'Stop your current walk before opening a saved route.', [{ text: 'OK' }]);
       return;
     }
     onClose();
-    router.push({ pathname: '/walk-review', params: { walkId } });
+    router.push({ pathname: '/walk-summary', params: { walkId } });
   };
 
   const walkCount = walks.length;
@@ -707,6 +861,94 @@ function PermissionsSection({ colors }: { colors: ColorPalette }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Accordion — used in Profile sheet
+// ---------------------------------------------------------------------------
+function SheetAccordion({
+  title,
+  icon,
+  colors,
+  defaultOpen = false,
+  children,
+}: {
+  title: string;
+  icon: string;
+  colors: ColorPalette;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const rotation = useRef(new Animated.Value(defaultOpen ? 1 : 0)).current;
+
+  const toggle = useCallback(() => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    Animated.timing(rotation, {
+      toValue: open ? 0 : 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+    setOpen((prev) => !prev);
+  }, [open, rotation]);
+
+  const chevronDeg = rotation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '90deg'] });
+
+  return (
+    <View style={[accStyle.wrapper, { borderColor: colors.border }]}>
+      <Pressable
+        style={[accStyle.header, { backgroundColor: colors.backgroundCard }]}
+        onPress={toggle}
+        android_ripple={{ color: colors.border }}
+      >
+        <View style={accStyle.headerLeft}>
+          <Ionicons name={icon as never} size={17} color={colors.primary} />
+          <Text style={[accStyle.headerTitle, { color: colors.text }]}>{title}</Text>
+        </View>
+        <Animated.View style={{ transform: [{ rotate: chevronDeg }] }}>
+          <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+        </Animated.View>
+      </Pressable>
+      {open ? (
+        <View style={[accStyle.body, { borderTopColor: colors.border }]}>
+          {children}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const accStyle = StyleSheet.create({
+  wrapper: {
+    width: '100%',
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    overflow: 'hidden',
+    marginBottom: Spacing.sm,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.base,
+    gap: Spacing.sm,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    flex: 1,
+  },
+  headerTitle: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.base,
+  },
+  body: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    padding: Spacing.base,
+    gap: Spacing.md,
+  },
+});
+
 function ProfileSheetContent({
   colors,
   insets,
@@ -729,6 +971,13 @@ function ProfileSheetContent({
   const { signOut } = useAuth();
   const { user } = useUser();
   const { colours, setColour, resetColours } = useRouteColours();
+  const { preferences, setPreference } = useUserPreferences();
+  const [weightDraft, setWeightDraft] = useState<string>(
+    preferences.bodyWeightKg !== null ? String(preferences.bodyWeightKg) : '',
+  );
+  useEffect(() => {
+    setWeightDraft(preferences.bodyWeightKg !== null ? String(preferences.bodyWeightKg) : '');
+  }, [preferences.bodyWeightKg]);
   const upsertCurrentUser = useMutation(api.users.upsertCurrentUser);
 
   useEffect(() => {
@@ -776,12 +1025,66 @@ function ProfileSheetContent({
         <Text style={[sheetStyles.signOutText, { color: colors.textMuted }]}>Sign Out</Text>
       </Pressable>
 
-      {/* Permissions */}
-      <PermissionsSection colors={colors} />
+      {/* ── Preferences ── */}
+      <SheetAccordion title="Preferences" icon="options-outline" colors={colors} defaultOpen>
+        {/* Distance unit */}
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Distance unit</Text>
+          </View>
+          <View style={[profileStyles.segmentControl, { borderColor: colors.border }]}>
+            <Pressable
+              style={[profileStyles.segment, !preferences.preferMiles && { backgroundColor: colors.primary }]}
+              onPress={() => setPreference('preferMiles', false)}
+            >
+              <Text style={{ color: preferences.preferMiles ? colors.textMuted : colors.textInverse, fontFamily: Typography.fontMedium, fontSize: Typography.sizes.xs }}>km</Text>
+            </Pressable>
+            <Pressable
+              style={[profileStyles.segment, preferences.preferMiles && { backgroundColor: colors.primary }]}
+              onPress={() => setPreference('preferMiles', true)}
+            >
+              <Text style={{ color: preferences.preferMiles ? colors.textInverse : colors.textMuted, fontFamily: Typography.fontMedium, fontSize: Typography.sizes.xs }}>mi</Text>
+            </Pressable>
+          </View>
+        </View>
+        {/* Body weight */}
+        <View style={sheetStyles.flagRow}>
+          <View style={[sheetStyles.flagLabel, { flex: 1 }]}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Body weight</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Used for calorie estimates</Text>
+          </View>
+          <View style={[profileStyles.weightInputWrap, { borderColor: colors.border, backgroundColor: colors.background }]}>
+            <TextInput
+              style={[profileStyles.weightInput, { color: colors.text }]}
+              value={weightDraft}
+              onChangeText={setWeightDraft}
+              keyboardType="decimal-pad"
+              placeholder="--"
+              placeholderTextColor={colors.textMuted}
+              returnKeyType="done"
+              onEndEditing={() => {
+                const parsed = parseFloat(weightDraft);
+                if (!weightDraft.trim()) {
+                  setPreference('bodyWeightKg', null);
+                } else if (!isNaN(parsed) && parsed > 0 && parsed < 500) {
+                  setPreference('bodyWeightKg', parsed);
+                } else {
+                  setWeightDraft(preferences.bodyWeightKg !== null ? String(preferences.bodyWeightKg) : '');
+                }
+              }}
+            />
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>kg</Text>
+          </View>
+        </View>
+      </SheetAccordion>
 
-      {/* Feature flags */}
-      <View style={[sheetStyles.flagsSection, { borderColor: colors.border }]}>
-        <Text style={[sheetStyles.flagsTitle, { color: colors.textMuted }]}>Developer Settings</Text>
+      {/* ── Permissions ── */}
+      <SheetAccordion title="Permissions" icon="shield-checkmark-outline" colors={colors}>
+        <PermissionsSection colors={colors} />
+      </SheetAccordion>
+
+      {/* ── Developer Settings ── */}
+      <SheetAccordion title="Developer Settings" icon="code-slash-outline" colors={colors}>
         <View style={sheetStyles.flagRow}>
           <View style={sheetStyles.flagLabel}>
             <Text style={[sheetStyles.flagName, { color: colors.text }]}>History during recording</Text>
@@ -796,7 +1099,7 @@ function ProfileSheetContent({
         <View style={sheetStyles.flagRow}>
           <View style={sheetStyles.flagLabel}>
             <Text style={[sheetStyles.flagName, { color: colors.text }]}>Force pedometer steps</Text>
-            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Use device pedometer for step counting even when Health Connect is available</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Use device pedometer even when Health Connect is available</Text>
           </View>
           <Switch
             value={forcePedometerSteps}
@@ -804,7 +1107,7 @@ function ProfileSheetContent({
             trackColor={{ false: colors.border, true: colors.primary }}
           />
         </View>
-        <View style={[sheetStyles.flagRow, { marginTop: Spacing.sm, flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <View style={sheetStyles.flagLabel}>
               <Text style={[sheetStyles.flagName, { color: colors.text }]}>GPS jitter filter</Text>
@@ -830,19 +1133,21 @@ function ProfileSheetContent({
             <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>4.0× (loose)</Text>
           </View>
         </View>
-      </View>
-      {/* Route Colours */}
-      <View style={[sheetStyles.flagsSection, { borderColor: colors.border }]}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: Spacing.xs }}>
-          <Text style={[sheetStyles.flagsTitle, { color: colors.textMuted }]}>Route Colours</Text>
-          <Pressable onPress={resetColours} hitSlop={8}>
-            <Text style={{ color: colors.primary, fontSize: Typography.sizes.xs }}>Reset</Text>
-          </Pressable>
+
+        {/* Route Colours — nested inside Dev Settings */}
+        <View style={{ gap: Spacing.sm }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Route colours</Text>
+            <Pressable onPress={resetColours} hitSlop={8}>
+              <Text style={{ color: colors.primary, fontSize: Typography.sizes.xs }}>Reset</Text>
+            </Pressable>
+          </View>
+          <RouteColourPicker label="Positive (fast / descent)" colour={colours.positive} onChange={(hex) => setColour('positive', hex)} />
+          <RouteColourPicker label="Neutral (flat / indeterminate)" colour={colours.neutral} onChange={(hex) => setColour('neutral', hex)} />
+          <RouteColourPicker label="Negative (slow / ascent)" colour={colours.negative} onChange={(hex) => setColour('negative', hex)} />
         </View>
-        <RouteColourPicker label="Positive (fast / descent)" colour={colours.positive} onChange={(hex) => setColour('positive', hex)} />
-        <RouteColourPicker label="Neutral (flat / indeterminate)" colour={colours.neutral} onChange={(hex) => setColour('neutral', hex)} />
-        <RouteColourPicker label="Negative (slow / ascent)" colour={colours.negative} onChange={(hex) => setColour('negative', hex)} />
-      </View>
+      </SheetAccordion>
+
       <Text style={[sheetStyles.version, { color: colors.textMuted }]}>v{appVersion}</Text>
     </BottomSheetScrollView>
   );
@@ -852,24 +1157,117 @@ function ProfileSheetContent({
 // Custom tab bar
 // ---------------------------------------------------------------------------
 
+function RecordTabButton({
+  active,
+  isRecording,
+  isPaused,
+  colors,
+  onPress,
+  onLongPress,
+}: {
+  active: boolean;
+  isRecording: boolean;
+  isPaused: boolean;
+  colors: ColorPalette;
+  onPress: () => void;
+  onLongPress: () => void;
+}) {
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (isRecording && !isPaused) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.25, duration: 700, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 700, useNativeDriver: true }),
+        ]),
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+    return undefined;
+  }, [isRecording, isPaused, pulseAnim]);
+
+  const active_ = active || isRecording || isPaused;
+  const bgColor = (isRecording || isPaused) ? '#b91c1c' : active_ ? colors.primary + '18' : 'transparent';
+  const labelColor = (isRecording || isPaused) ? '#fff' : active_ ? colors.primary : colors.tabIconDefault;
+  const label = isPaused ? 'Paused' : isRecording ? 'Recording' : 'Record';
+
+  return (
+    <TouchableOpacity
+      style={tabBarStyles.button}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={600}
+      activeOpacity={0.7}
+    >
+      <View style={[tabBarStyles.pill, { backgroundColor: bgColor }]}>
+        <Animated.View
+          style={[
+            tabBarStyles.recordDot,
+            (isRecording || isPaused)
+              ? { backgroundColor: '#fff', opacity: pulseAnim }
+              : { backgroundColor: '#b91c1c' },
+          ]}
+        />
+        <Text style={[tabBarStyles.label, { color: labelColor, fontFamily: Typography.fontMedium }]}>
+          {label}
+        </Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
 function TabBar({
   active,
   onPress,
+  onRecordLongPress,
   colors,
   insets,
   isRecording,
+  isPaused,
 }: {
   active: SheetTab | null;
   onPress: (tab: SheetTab) => void;
+  onRecordLongPress: () => void;
   colors: ColorPalette;
   insets: ReturnType<typeof useSafeAreaInsets>;
   isRecording: boolean;
+  isPaused: boolean;
 }) {
-  const tabs: { id: SheetTab; icon: string; label: string }[] = [
-    { id: 'record', icon: 'figure.walk', label: 'Record' },
-    { id: 'library', icon: 'list.bullet', label: 'History' },
-    { id: 'profile', icon: 'person.circle', label: 'Profile' },
+  const sideTabs: { id: SheetTab; icon: string; label: string }[] = [
+    { id: 'explore',  icon: 'safari',        label: 'Explore' },
+    { id: 'plan',     icon: 'map',           label: 'Plan' },
   ];
+  const rightTabs: { id: SheetTab; icon: string; label: string }[] = [
+    { id: 'sessions', icon: 'list.bullet',   label: 'Sessions' },
+    { id: 'profile',  icon: 'person.circle', label: 'Profile' },
+  ];
+
+  const renderTab = (tab: { id: SheetTab; icon: string; label: string }) => {
+    const isActive = active === tab.id;
+    const color = isActive ? colors.primary : colors.tabIconDefault;
+    return (
+      <TouchableOpacity
+        key={tab.id}
+        style={tabBarStyles.button}
+        onPress={() => onPress(tab.id)}
+        activeOpacity={0.7}
+      >
+        <View style={[
+          tabBarStyles.pill,
+          isActive && { backgroundColor: colors.primary + '18' },
+        ]}>
+          <IconSymbol size={22} name={tab.icon as any} color={color} />
+          <Text style={[tabBarStyles.label, { color, fontFamily: Typography.fontMedium }]}>
+            {tab.label}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View
@@ -883,28 +1281,16 @@ function TabBar({
       ]}
     >
       <View style={tabBarStyles.buttons}>
-        {tabs.map((tab) => {
-          const isActive = active === tab.id;
-          const color = isActive ? colors.primary : colors.tabIconDefault;
-          return (
-            <TouchableOpacity
-              key={tab.id}
-              style={tabBarStyles.button}
-              onPress={() => onPress(tab.id)}
-              activeOpacity={0.7}
-            >
-              <View style={[
-                tabBarStyles.pill,
-                isActive && { backgroundColor: colors.primary + '18' },
-              ]}>
-                <IconSymbol size={22} name={tab.icon as any} color={color} />
-                <Text style={[tabBarStyles.label, { color, fontFamily: Typography.fontMedium }]}>
-                  {tab.label}
-                </Text>
-              </View>
-            </TouchableOpacity>
-          );
-        })}
+        {sideTabs.map(renderTab)}
+        <RecordTabButton
+          active={active === 'record'}
+          isRecording={isRecording}
+          isPaused={isPaused}
+          colors={colors}
+          onPress={() => onPress('record')}
+          onLongPress={onRecordLongPress}
+        />
+        {rightTabs.map(renderTab)}
       </View>
     </View>
   );
@@ -920,9 +1306,13 @@ export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const perms = useLocationPermission();
   const { state, pausedDurationMs, start, pause, resume, stop, reset } = useWalkSessionContext();
+  const router = useRouter();
 
-  // Live Broadcast toggle — user opts in before starting a walk.
-  const [isLiveWalk, setIsLiveWalk] = useState(false);
+  // Live Broadcast toggle — kept in state for potential future use
+  const [isLiveWalk] = useState(false);
+
+  // Body weight from preferences (for live calorie estimate)
+  const { preferences, setPreference } = useUserPreferences();
 
   // Mount the live-sync hook; it self-gates on isLive and phase.
   useLiveWalkSync();
@@ -932,7 +1322,7 @@ export default function MapScreen() {
   const activeWalkId =
     state.phase === 'recording' || state.phase === 'paused' ? state.walkId : null;
 
-  const { distanceMetres, paceSecsPerKm, lastAltitude, accuracy, pointCount, coordinates } =
+  const { distanceMetres, paceSecsPerKm, lastAltitude, accuracy, pointCount, coordinates, elevationGainMetres, elevationLossMetres, lastSpeedMps, trackPoints, sessionPhotos } =
     useLiveStats(activeWalkId);
 
   const [currentLocation, setCurrentLocation] =
@@ -949,7 +1339,6 @@ export default function MapScreen() {
   // Sheet state
   const [activeSheet, setActiveSheet] = useState<SheetTab | null>(null);
   const sheetRef = useRef<BottomSheet>(null);
-  const router = useRouter();
 
   // Cancel-then-schedule pattern: always clear any pending snap before
   // scheduling a new one so rapid taps can never stack concurrent
@@ -1030,12 +1419,11 @@ export default function MapScreen() {
   // Snap points per sheet.
   // Record idle: single point (prevents unwanted drag-snapping on the welcome card)
   // Record active: multiple latches for peeking vs full stats
-  // Library / Profile: single point each
+  // Profile: single point
   const snapPoints = useMemo(() => {
     const adj = (n: number) => `${n + navAdjPct}%`;
-    if (activeSheet === 'library') return [adj(92)];
     if (activeSheet === 'profile') return [adj(92)];
-    if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(43), adj(62)];
+    if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(50), adj(70), adj(92)];
     return [adj(62)]; // record idle at same height as active index 3 — no jump on recording start
   }, [activeSheet, isActive, navAdjPct]);
 
@@ -1060,12 +1448,15 @@ export default function MapScreen() {
   const prevIsActive = useRef(false);
   useEffect(() => {
     if (isActive && !prevIsActive.current) {
+      // Cancel any pending snap timer so it can't collapse the sheet
+      // after we've already snapped to the correct expanded position.
+      if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
       setActiveSheet('record');
       // When snap points grow from 1 item to 4 items, Gorhom remaps the current
       // index (0 → 23%) causing the sheet to collapse. Calling snapToPosition
       // with the absolute percentage is index-immune and fires immediately with
       // no animation blip.
-      sheetRef.current?.snapToPosition(`${62 + navAdjPct}%`);
+      sheetRef.current?.snapToPosition(`${70 + navAdjPct}%`);
     }
     prevIsActive.current = isActive;
   }, [isActive, navAdjPct]);
@@ -1088,6 +1479,51 @@ export default function MapScreen() {
   }, [isActive]);
 
   const handleTabPress = (tab: SheetTab) => {
+    // Explore tab — overlay not yet designed; placeholder for now.
+    if (tab === 'explore') {
+      Alert.alert('Coming Soon', 'The Explore overlay is not yet available.');
+      return;
+    }
+
+    // Plan tab — placeholder (future feature)
+    if (tab === 'plan') {
+      Alert.alert('Coming Soon', 'Route planning will be available in a future update.');
+      return;
+    }
+
+    // Sessions tab — navigate to the dedicated sessions screen
+    if (tab === 'sessions') {
+      router.push('/(tabs)/sessions');
+      return;
+    }
+
+    if (tab === 'record') {
+      if ((state.phase === 'idle' || state.phase === 'completed') && perms.foreground === 'granted') {
+        // Ensure we're fully reset before prompting to start again
+        if (state.phase === 'completed') reset();
+        // Not yet recording — ask first, then start + open sheet on confirm.
+        Alert.alert(
+          'Start recording?',
+          'Your walk will be tracked and saved.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Start',
+              onPress: () => {
+                void start({ isLive: isLiveWalk });
+                // Open the sheet at snap 0; the isActive useEffect will expand
+                // snap points and snap to the correct position once recording begins.
+                setActiveSheet('record');
+                scheduleSnap(0);
+              },
+            },
+          ],
+        );
+        return;
+      }
+      // Already recording/paused — just toggle the sheet as normal.
+    }
+
     const targetIdx = tab === 'record' && isActive ? 3 : 0;
     if (activeSheet === tab) {
       if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
@@ -1098,7 +1534,6 @@ export default function MapScreen() {
     } else {
       setActiveSheet(tab);
       if (targetIdx > 0) {
-        // Sheet is closed — open safely at 0, then snap to target once settled.
         pendingFinalSnapRef.current = targetIdx;
         scheduleSnap(0);
       } else {
@@ -1114,6 +1549,79 @@ export default function MapScreen() {
   const needsForeground = perms.loaded && perms.foreground !== 'granted';
   const needsBackground =
     perms.loaded && perms.foreground === 'granted' && perms.background !== 'granted';
+
+  // Track the sheet's settled snap index so we can compute camera bottom padding.
+  const [sheetSnapIndex, setSheetSnapIndex] = useState<number>(-1);
+
+  // Re-centre camera on current location whenever the sheet snap changes,
+  // offsetting the map centre upward by half the sheet height so the position
+  // dot sits in the middle of the visible map strip above the sheet.
+  useEffect(() => {
+    if (!currentLocation || isReviewActive) return;
+    const sheetHeightPct = sheetSnapIndex >= 0 && snapPoints[sheetSnapIndex]
+      ? parseFloat(String(snapPoints[sheetSnapIndex])) / 100
+      : 0;
+    const sheetPx = windowHeight * sheetHeightPct;
+    cameraRef.current?.setCamera({
+      centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
+      zoomLevel: 15,
+      padding: { paddingBottom: sheetPx, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+      animationDuration: 300,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetSnapIndex]);
+
+  // ── Smart back-button handler ────────────────────────────────────────────
+  // Registered here (later than _layout.tsx) so it fires first.
+  const { signOut: signOutMain } = useAuth();
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // 1. Panel open → close it (same as tapping the active tab again)
+      if (activeSheet !== null) {
+        if (pendingSnapRef.current !== null) {
+          clearTimeout(pendingSnapRef.current);
+          pendingSnapRef.current = null;
+        }
+        pendingFinalSnapRef.current = null;
+        ignoreNextCloseRef.current = true;
+        setActiveSheet(null);
+        sheetRef.current?.close();
+        return true;
+      }
+
+      // 2. Recording active, no panel → offer to stop
+      if (state.phase === 'recording' || state.phase === 'paused') {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        Alert.alert(
+          'Recording in progress',
+          'Do you want to stop and save your current walk?',
+          [
+            { text: 'Keep Going', style: 'cancel' },
+            {
+              text: 'Stop & Save',
+              style: 'destructive',
+              onPress: () => { void stop(stepCountRef.current); },
+            },
+          ],
+        );
+        return true;
+      }
+
+      // 3. Map visible, idle → offer sign-out
+      Alert.alert(
+        'Sign Out',
+        'Do you want to sign out?',
+        [
+          { text: 'No', style: 'cancel' },
+          { text: 'Yes', style: 'destructive', onPress: () => { void signOutMain(); } },
+        ],
+      );
+      return true;
+    });
+    return () => sub.remove();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSheet, state.phase, signOutMain]);
+  // ────────────────────────────────────────────────────────────────────────
 
   return (
     <View style={styles.container}>
@@ -1147,7 +1655,7 @@ export default function MapScreen() {
           coordinates={isReviewActive ? [] : coordinates}
           showUserLocation={perms.foreground === 'granted'}
         />
-        {/* Review route — shown while walk-review transparentModal is open on top */}
+        {/* Review route — shown while walk-summary transparentModal is open on top */}
         {isReviewActive && (
           <ReviewRouteLayer
             points={reviewRoute}
@@ -1157,11 +1665,12 @@ export default function MapScreen() {
         )}
       </MapboxGL.MapView>
 
-      {/* Recording status badge — top-centre map overlay */}
+      {/* Recording status badge (with inline GPS signal) — top-centre map overlay */}
       {isRecording && (
         <View style={styles.recordingOverlay}>
           <RecordingStatusBadge
             status={state.phase}
+            accuracyMetres={displayAccuracy}
             onPress={() => sheetEvents.open('record')}
           />
         </View>
@@ -1205,6 +1714,7 @@ export default function MapScreen() {
         backgroundStyle={{ backgroundColor: colors.backgroundCard }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
+          setSheetSnapIndex(index);
           if (index === -1) {
             // Always cancel pending snap timers on close to prevent out-of-range crashes.
             if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
@@ -1240,26 +1750,27 @@ export default function MapScreen() {
             distanceMetres={distanceMetres}
             paceSecsPerKm={paceSecsPerKm}
             displayAltitude={displayAltitude}
-            displayAccuracy={displayAccuracy}
             pointCount={pointCount}
             stepCount={stepCount}
             stepSource={stepSource}
             currentLocation={currentLocation}
-            start={(options) => start(options)}
-            isLiveWalk={isLiveWalk}
-            onToggleLive={setIsLiveWalk}
+            elevationGainMetres={elevationGainMetres}
+            elevationLossMetres={elevationLossMetres}
+            lastSpeedMps={lastSpeedMps}
+            trackPoints={trackPoints}
+            sessionPhotos={sessionPhotos}
+            bodyWeightKg={preferences.bodyWeightKg}
+            onSetBodyWeight={(kg) => setPreference('bodyWeightKg', kg)}
+            statPanelOrder={(() => {
+              const saved = preferences.statPanelOrder ?? [...DEFAULT_STAT_PANEL_ORDER];
+              // Migrate: ensure 'elevation' panel is present in stored orders
+              return saved.includes('elevation') ? saved : [...saved, 'elevation'];
+            })()}
+            onStatPanelReorder={(keys) => setPreference('statPanelOrder', keys)}
             pause={pause}
             resume={resume}
             stop={() => stop(stepCountRef.current)}
             reset={reset}
-          />
-        )}
-        {activeSheet === 'library' && (
-          <HistorySheetContent
-            colors={colors}
-            insets={insets}
-            onClose={() => { sheetRef.current?.close(); setActiveSheet(null); }}
-            allowDuringRecording={flags.allowHistoryDuringRecording}
           />
         )}
         {activeSheet === 'profile' && (
@@ -1315,16 +1826,61 @@ export default function MapScreen() {
               style={styles.mapButton}
             />
           )}
+          {/* Save Point button — only while actively recording or paused */}
+          {isActive && (
+            <SavePointButton
+              walkId={state.walkId}
+              currentLocation={currentLocation}
+              style={styles.mapButton}
+            />
+          )}
         </View>
+      )}
+
+      {/* Restore FAB — shown when recording is active but the sheet is closed */}
+      {isRecording && activeSheet === null && (
+        <TouchableOpacity
+          style={[
+            styles.restoreFab,
+            { bottom: insets.bottom + 70, backgroundColor: colors.backgroundCard, borderColor: colors.border },
+          ]}
+          onPress={() => sheetEvents.open('record')}
+          activeOpacity={0.85}
+        >
+          {/* 2×2 grid — spreadsheet cells icon */}
+          <View style={styles.restoreFabGrid}>
+            <View style={[styles.restoreFabCell, { borderColor: colors.border }]} />
+            <View style={[styles.restoreFabCell, { borderColor: colors.border }]} />
+            <View style={[styles.restoreFabCell, { borderColor: colors.border }]} />
+            <View style={[styles.restoreFabCell, { borderColor: colors.border }]} />
+          </View>
+        </TouchableOpacity>
       )}
 
       {/* Custom tab bar — rendered last so it sits on top of the sheet handle */}
       <TabBar
         active={activeSheet}
         onPress={handleTabPress}
+        onRecordLongPress={() => {
+          if (state.phase !== 'recording' && state.phase !== 'paused') return;
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          Alert.alert(
+            'Finished your walk?',
+            'This will stop and save your current recording.',
+            [
+              { text: 'Keep Going', style: 'cancel' },
+              {
+                text: 'Stop & Save',
+                style: 'destructive',
+                onPress: () => { void stop(stepCountRef.current); },
+              },
+            ],
+          );
+        }}
         colors={colors}
         insets={insets}
-        isRecording={isRecording}
+        isRecording={state.phase === 'recording'}
+        isPaused={state.phase === 'paused'}
       />
     </View>
   );
@@ -1385,6 +1941,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   permissionCard: { flex: 1, width: '100%', paddingHorizontal: Spacing.base },
+  restoreFab: {
+    position: 'absolute',
+    alignSelf: 'center',
+    left: '50%',
+    marginLeft: -28,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
+    zIndex: 20,
+  },
+  restoreFabGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: 24,
+    height: 24,
+    gap: 3,
+  },
+  restoreFabCell: {
+    width: 10,
+    height: 10,
+    borderWidth: 1.5,
+    borderRadius: 2,
+  },
 });
 
 const sheetStyles = StyleSheet.create({
@@ -1396,6 +1983,20 @@ const sheetStyles = StyleSheet.create({
     gap: Spacing.sm,
   },
   section: { gap: Spacing.md },
+  recordFixedHeader: {
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.sm,
+    gap: Spacing.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  sectionLabel: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.xs,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.8,
+    marginBottom: Spacing.xs,
+  },
   debugRow: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: Spacing.xs },
   debugText: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.xs },
   sheetTitle: { fontFamily: Typography.fontBold, fontSize: Typography.sizes.lg },
@@ -1494,6 +2095,37 @@ const permStyles = StyleSheet.create({
   },
 });
 
+const profileStyles = StyleSheet.create({
+  segmentControl: {
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderRadius: Radius.sm,
+    overflow: 'hidden',
+  },
+  segment: {
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  weightInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: Spacing.xs,
+    gap: Spacing.xs,
+    minWidth: 80,
+  },
+  weightInput: {
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.base,
+    minWidth: 44,
+    textAlign: 'right',
+  },
+});
+
 const tabBarStyles = StyleSheet.create({
   bar: {
     position: 'absolute',
@@ -1524,9 +2156,61 @@ const tabBarStyles = StyleSheet.create({
   label: {
     fontSize: Typography.sizes.xs,
   },
+  recordDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
 });
 
-const welcomeStyles = StyleSheet.create({
+const weightModalStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: '#00000066',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    borderTopLeftRadius: Radius.lg,
+    borderTopRightRadius: Radius.lg,
+    padding: Spacing.base,
+    gap: Spacing.sm,
+  },
+  handle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    alignSelf: 'center' as const,
+    marginBottom: Spacing.xs,
+  },
+  title: {
+    fontFamily: Typography.fontBold,
+    fontSize: Typography.sizes.lg,
+  },
+  subtitle: {
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.sm,
+  },
+  input: {
+    borderWidth: 1,
+    borderRadius: Radius.sm,
+    padding: Spacing.sm,
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.sm,
+  },
+  saveBtn: {
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md,
+    alignItems: 'center' as const,
+    marginTop: Spacing.xs,
+  },
+  saveBtnText: {
+    color: '#fff',
+    fontFamily: Typography.fontBold,
+    fontSize: Typography.sizes.base,
+  },
+});
+
+const _welcomeStylesUnused = StyleSheet.create({
   card: {
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.md,

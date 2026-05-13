@@ -1,87 +1,488 @@
+import { Ionicons } from '@expo/vector-icons';
+import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import { Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import MapboxGL from '@rnmapbox/maps';
+
+import { PhotoViewerCarousel } from '@/components/review/photo-viewer-carousel';
+import { ReviewActionBar } from '@/components/review/review-action-bar';
+import { ReviewRouteLayer } from '@/components/review/review-route-layer';
+import { ReviewTabBar, type TabDef } from '@/components/review/review-tab-bar';
+import { TabElevation } from '@/components/review/tab-elevation';
+import { TabHealthStats } from '@/components/review/tab-health-stats';
+import { TabPhotos } from '@/components/review/tab-photos';
+import { TabTraining } from '@/components/review/tab-training';
+import { TabWalkStats } from '@/components/review/tab-walk-stats';
 import { AppHeader } from '@/components/shared/app-header';
-import { WalkSummaryCard } from '@/components/shared/walk-summary-card';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { getWalk } from '@/lib/db/walks';
+import { useRouteColours } from '@/hooks/use-route-colours';
+import { useUserPreferences } from '@/hooks/use-user-preferences';
+import { getPhotosForWalk } from '@/lib/db/walk-photos';
+import { deleteWalk, getWalk, updateWalkTitle } from '@/lib/db/walks';
+import { buildRoute } from '@/lib/review/build-route';
+import {
+  ROUTE_DISPLAY_MODES,
+  type RouteDisplayMode,
+} from '@/lib/review/route-display-modes';
+
+const TABS: TabDef[] = [
+  { id: 'walk',      label: 'Walk Stats', icon: 'walk-outline' },
+  { id: 'health',    label: 'Health',     icon: 'heart-outline' },
+  { id: 'elevation', label: 'Elevation',  icon: 'trending-up-outline' },
+  { id: 'training',  label: 'Training',   icon: 'stats-chart-outline' },
+  { id: 'photos',    label: 'Photos',     icon: 'camera-outline' },
+];
 
 export default function WalkSummaryScreen() {
   const { walkId } = useLocalSearchParams<{ walkId: string }>();
+  const router = useRouter();
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
-  const router = useRouter();
+  const { colours } = useRouteColours();
+  const { preferences, setPreference } = useUserPreferences();
+  const unit = preferences.preferMiles ? 'mi' : 'km';
+  const insets = useSafeAreaInsets();
+  const { height: screenHeight } = useWindowDimensions();
+  const sheetRef = useRef<BottomSheet>(null);
 
-  const walk = walkId ? getWalk(walkId) : null;
+  // Load all data synchronously from SQLite
+  const walk = useMemo(() => (walkId ? getWalk(walkId) : null), [walkId]);
+  const route = useMemo(() => (walkId ? buildRoute(walkId) : []), [walkId]);
+  const photos = useMemo(() => (walkId ? getPhotosForWalk(walkId) : []), [walkId]);
 
-  if (!walk || !walk.stats || !walk.endedAt) {
+  const [title, setTitle] = useState<string | null>(walk?.title ?? null);
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState<number | null>(null);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draft, setDraft] = useState<string>('');
+  const [displayMode, setDisplayMode] = useState<RouteDisplayMode>('route');
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [saveRouteModalVisible, setSaveRouteModalVisible] = useState(false);
+  const [activeTab, setActiveTab] = useState<string>('walk');
+  const [sheetOpen, setSheetOpen] = useState(true);
+  const [focusPhotoCoordinate, setFocusPhotoCoordinate] = useState<[number, number] | null>(null);
+
+  // Until Replaying Phase 1 adds followSessionId to the walks table,
+  // all walks are treated as free walks and Save Route is always shown.
+  const showSaveRoute = true;
+
+  if (!walk) {
     return (
-      <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
-        <AppHeader title="Walk Summary" />
-        <View style={styles.empty}>
-          <Text style={[styles.emptyText, { color: colors.textMuted }]}>
-            Walk data not found.
-          </Text>
-        </View>
-      </SafeAreaView>
+      <View style={[styles.errorContainer, { backgroundColor: colors.background }]}>
+        <Text style={[styles.errorText, { color: colors.text }]}>Walk not found</Text>
+        <Text
+          style={[styles.errorBack, { color: colors.primary }]}
+          onPress={() => router.back()}
+        >
+          Go back
+        </Text>
+      </View>
     );
   }
 
+  const stats = walk.stats;
+
+  const displayTitle =
+    title ??
+    new Date(walk.startedAt).toLocaleDateString('en-GB', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+
+  const handleDelete = () => {
+    deleteWalk(walk.id);
+    router.replace('/(tabs)');
+  };
+
+  const handleStartEditTitle = () => {
+    setDraft(displayTitle);
+    setEditingTitle(true);
+  };
+
+  const handleConfirmTitle = () => {
+    const trimmed = draft.trim();
+    if (trimmed) {
+      updateWalkTitle(walk.id, trimmed);
+      setTitle(trimmed);
+    }
+    setEditingTitle(false);
+  };
+
+  const handleCancelTitle = () => {
+    setEditingTitle(false);
+  };
+
   return (
-    <SafeAreaView style={[styles.safe, { backgroundColor: colors.background }]}>
-      <AppHeader title="Walk Summary" />
-      <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
+    <View style={styles.container}>
+      {/* Own interactive map — full screen behind the bottom sheet */}
+      <MapboxGL.MapView
+        style={StyleSheet.absoluteFill}
+        styleURL={MapboxGL.StyleURL.Outdoors}
+        logoEnabled={false}
+        attributionEnabled={false}
+        compassEnabled={false}
       >
-        <WalkSummaryCard
-          walk={{
-            title: walk.title,
-            startedAt: walk.startedAt,
-            endedAt: walk.endedAt,
-            stats: walk.stats,
+        <ReviewRouteLayer
+          points={route}
+          photos={photos}
+          onPhotoTap={(photo) => {
+            const idx = photos.findIndex((p) => p.id === photo.id);
+            setSelectedPhotoIndex(idx >= 0 ? idx : 0);
           }}
+          showPhotoMarkers={activeTab === 'photos'}
+          mode={displayMode}
+          colours={colours}
+          cameraPaddingBottom={sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60}
+          cameraPaddingTop={insets.top + 60}
+          focusCoordinate={focusPhotoCoordinate}
+          onPhotoLongPress={(photo) => setFocusPhotoCoordinate([photo.longitude, photo.latitude])}
         />
+      </MapboxGL.MapView>
+
+      {/* Photo viewer carousel — renders over everything */}
+      {selectedPhotoIndex !== null && (
+        <PhotoViewerCarousel
+          photos={photos}
+          initialIndex={selectedPhotoIndex}
+          walk={walk}
+          route={route}
+          unit={unit}
+          onClose={() => setSelectedPhotoIndex(null)}
+        />
+      )}
+
+      {/* Route mode picker button — top-right, below the app header.
+          Long-press (or tap) to open the mode picker. */}
+      {route.length >= 2 && (
         <TouchableOpacity
-          style={[styles.doneButton, { backgroundColor: colors.primary }]}
-          onPress={() => router.replace('/(tabs)')}
+          style={[
+            styles.modeButton,
+            { top: insets.top + 60, backgroundColor: colors.backgroundCard, borderColor: colors.border },
+          ]}
+          onPress={() => setPickerOpen((v) => !v)}
+          onLongPress={() => setPickerOpen(true)}
           activeOpacity={0.8}
         >
-          <Text style={styles.doneText}>Done</Text>
+          <Ionicons name="layers-outline" size={22} color={colors.textMuted} />
         </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+      )}
+
+      {/* Mode picker modal */}
+      <Modal
+        visible={pickerOpen}
+        transparent
+        animationType="fade"
+        statusBarTranslucent
+        onRequestClose={() => setPickerOpen(false)}
+      >
+        {/* Full-screen backdrop — tap to dismiss */}
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => setPickerOpen(false)}
+        />
+        {/* Picker card — sibling of backdrop so tapping it doesn’t bubble to dismiss */}
+        <View
+          style={[
+            styles.pickerCard,
+            {
+              top: insets.top + 60 + 44 + Spacing.sm,
+              right: Spacing.base,
+              backgroundColor: colors.backgroundCard,
+              borderColor: colors.border,
+            },
+          ]}
+        >
+          {ROUTE_DISPLAY_MODES.map((m, idx) => (
+            <Pressable
+              key={m.id}
+              style={[
+                styles.pickerOption,
+                idx > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+                displayMode === m.id && { backgroundColor: colors.primary + '18' },
+              ]}
+              onPress={() => { setDisplayMode(m.id); setPickerOpen(false); }}
+            >
+              {/* Colour swatches */}
+              <View style={styles.swatchRow}>
+                {m.swatchColors.map((c) => (
+                  <View key={c} style={[styles.swatchDot, { backgroundColor: c }]} />
+                ))}
+              </View>
+              {/* Text */}
+              <View style={styles.pickerTextBlock}>
+                <Text style={[styles.pickerLabel, { color: colors.text }]}>{m.label}</Text>
+                <Text style={[styles.pickerDesc, { color: colors.textMuted }]}>{m.description}</Text>
+              </View>
+              {/* Active tick */}
+              {displayMode === m.id && (
+                <Ionicons name="checkmark" size={18} color={colors.primary} />
+              )}
+            </Pressable>
+          ))}
+        </View>
+      </Modal>
+
+      {/* App header — absolute overlay at top */}
+      <View style={styles.headerOverlay} pointerEvents="box-none">
+        <AppHeader
+          title={displayTitle}
+          onBack={editingTitle ? handleCancelTitle : () => router.back()}
+          centerContent={
+            editingTitle ? (
+              <TextInput
+                style={[styles.titleInput, { color: colors.text, borderColor: colors.border }]}
+                value={draft}
+                onChangeText={setDraft}
+                autoFocus
+                returnKeyType="done"
+                onSubmitEditing={handleConfirmTitle}
+                selectTextOnFocus
+              />
+            ) : undefined
+          }
+          rightAction={
+            editingTitle ? (
+              <Pressable onPress={handleConfirmTitle} hitSlop={8} style={styles.headerAction}>
+                <Ionicons name="checkmark" size={22} color={colors.success} />
+              </Pressable>
+            ) : (
+              <Pressable onPress={handleStartEditTitle} hitSlop={8} style={styles.headerAction}>
+                <Ionicons name="pencil-outline" size={20} color={colors.textMuted} />
+              </Pressable>
+            )
+          }
+        />
+      </View>
+
+      {/* Restore FAB — shown when sheet is closed */}
+      {!sheetOpen && (
+        <TouchableOpacity
+          style={[
+            styles.restoreFab,
+            { bottom: insets.bottom + 80, backgroundColor: colors.backgroundCard, borderColor: colors.border },
+          ]}
+          onPress={() => {
+            setSheetOpen(true);
+            sheetRef.current?.snapToIndex(0);
+          }}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="bar-chart-outline" size={20} color={colors.textMuted} />
+        </TouchableOpacity>
+      )}
+
+      {/* Bottom sheet — single snap point so there is no mid-position sticking */}
+      <BottomSheet
+        ref={sheetRef}
+        index={sheetOpen ? 0 : -1}
+        snapPoints={['75%']}
+        enableDynamicSizing={false}
+        enablePanDownToClose
+        backgroundStyle={{ backgroundColor: colors.backgroundCard }}
+        handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
+        onChange={(index) => {
+          if (index === -1) setSheetOpen(false);
+          else if (!sheetOpen) setSheetOpen(true);
+        }}
+      >
+        {/* Fixed tab bar — sits above the scroll view so it never scrolls away */}
+        <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
+          <ReviewTabBar
+            tabs={TABS}
+            activeTab={activeTab}
+            onTabChange={(tab) => {
+              setActiveTab(tab);
+              // Leaving the photos tab — clear any photo focus so the route re-fits
+              if (tab !== 'photos') setFocusPhotoCoordinate(null);
+            }}
+          />
+        </View>
+
+        <BottomSheetScrollView
+          contentContainerStyle={[
+            styles.sheetContent,
+            { paddingBottom: 60 + insets.bottom + Spacing.lg },
+          ]}
+        >
+          {/* Tab content */}
+          {activeTab === 'walk' && (
+            <TabWalkStats
+              stats={stats}
+              unit={unit}
+              startedAt={walk.startedAt}
+              onUnitToggle={() => setPreference('preferMiles', !preferences.preferMiles)}
+              photoCount={photos.length}
+            />
+          )}
+          {activeTab === 'health' && (
+            <TabHealthStats
+              stats={stats}
+              bodyWeightKg={preferences.bodyWeightKg}
+              onSetBodyWeight={(kg) => setPreference('bodyWeightKg', kg)}
+            />
+          )}
+          {activeTab === 'elevation' && (
+            <TabElevation
+              points={route}
+              stats={stats}
+            />
+          )}
+          {activeTab === 'training' && (
+            <TabTraining
+              walk={walk}
+              stats={stats}
+              route={route}
+            />
+          )}
+          {activeTab === 'photos' && (
+            <TabPhotos
+              photos={photos}
+              route={route}
+              walk={walk}
+              unit={unit}
+              onPhotoOpen={(photo, index) => setSelectedPhotoIndex(index)}
+            />
+          )}
+        </BottomSheetScrollView>
+      </BottomSheet>
+
+      {/* Fixed bottom action bar — outside the sheet so it stays pinned */}
+      <ReviewActionBar
+        onShare={() => {}}
+        onExportGpx={() => {}}
+        onSaveRoute={() => setSaveRouteModalVisible(true)}
+        onDelete={handleDelete}
+        showSaveRoute={showSaveRoute}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
-    flex: 1,
+  container: { flex: 1 },
+  headerOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
   },
-  scroll: {
-    padding: Spacing.base,
-    gap: Spacing.base,
-    paddingBottom: Spacing.xxl,
+  sheetHeader: {
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.xs,
+    borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  empty: {
+  sheetContent: {
+    paddingHorizontal: Spacing.base,
+    paddingTop: Spacing.sm,
+    gap: Spacing.md,
+  },
+  restoreFab: {
+    position: 'absolute',
+    alignSelf: 'center',
+    left: '50%',
+    marginLeft: -24,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 4,
+    zIndex: 20,
+  },
+  errorContainer: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    gap: Spacing.md,
   },
-  emptyText: {
+  errorText: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.base,
+  },
+  errorBack: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.base,
+  },
+  titleInput: {
+    flex: 1,
+    height: 36,
+    borderWidth: 1,
+    borderRadius: 8,
+    paddingHorizontal: Spacing.sm,
+    paddingVertical: 0,
+    textAlignVertical: 'center',
     fontFamily: Typography.fontRegular,
     fontSize: Typography.sizes.base,
   },
-  doneButton: {
-    borderRadius: 12,
-    paddingVertical: Spacing.md,
-    alignItems: 'center',
-    marginTop: Spacing.sm,
+  headerAction: {
+    padding: Spacing.xs,
   },
-  doneText: {
-    color: '#fff',
-    fontFamily: Typography.fontBold,
-    fontSize: Typography.sizes.base,
+  modeButton: {
+    position: 'absolute',
+    right: Spacing.base,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  pickerCard: {
+    position: 'absolute',
+    right: Spacing.base,
+    width: 290,
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  pickerOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.base,
+    paddingVertical: Spacing.sm,
+    gap: Spacing.sm,
+  },
+  swatchRow: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  swatchDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  pickerTextBlock: {
+    flex: 1,
+    gap: 2,
+  },
+  pickerLabel: {
+    fontFamily: Typography.fontMedium,
+    fontSize: Typography.sizes.sm,
+  },
+  pickerDesc: {
+    fontFamily: Typography.fontRegular,
+    fontSize: Typography.sizes.xs,
+    lineHeight: 16,
   },
 });

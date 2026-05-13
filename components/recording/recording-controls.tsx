@@ -9,7 +9,6 @@ type Phase = 'idle' | 'recording' | 'paused' | 'completing' | 'completed';
 
 interface RecordingControlsProps {
   phase: Phase;
-  onStart: () => void;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
@@ -18,7 +17,6 @@ interface RecordingControlsProps {
 
 export function RecordingControls({
   phase,
-  onStart,
   onPause,
   onResume,
   onStop,
@@ -26,6 +24,18 @@ export function RecordingControls({
 }: RecordingControlsProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
+
+  function handlePause() {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      'Pause recording?',
+      '',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Pause', onPress: onPause },
+      ],
+    );
+  }
 
   function handleStop() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -39,62 +49,35 @@ export function RecordingControls({
     );
   }
 
-  if (phase === 'idle') {
-    return (
-      <View style={styles.row}>
-        <TouchableOpacity
-          style={[
-            styles.primary,
-            { backgroundColor: colors.success },
-            disabled && styles.disabled,
-          ]}
-          onPress={() => {
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-            onStart();
-          }}
-          disabled={disabled}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.primaryText}>Start my walk</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  // Phase 13a: idle phase no longer shows a Start button — start happens on tab tap.
+  if (phase === 'idle') return null;
 
   if (phase === 'recording') {
     return (
       <View style={styles.row}>
+        {/* Pause — grey, left */}
         <TouchableOpacity
-          style={[
-            styles.secondary,
-            { borderColor: colors.primary },
-            disabled && styles.disabled,
-          ]}
-          onPress={() => {
-            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            onPause();
-          }}
+          style={[styles.actionBtn, { backgroundColor: colors.backgroundMuted }, disabled && styles.disabled]}
+          onPress={handlePause}
           disabled={disabled}
           activeOpacity={0.8}
         >
           <View style={styles.buttonInner}>
-            <IconSymbol name="pause.circle.fill" size={20} color={colors.primary} />
-            <Text style={[styles.secondaryText, { color: colors.primary }]}>Pause</Text>
+            <IconSymbol name="pause.circle.fill" size={20} color={colors.text} />
+            <Text style={[styles.actionText, { color: colors.text }]}>Pause</Text>
           </View>
         </TouchableOpacity>
+
+        {/* Stop — red, centre, most prominent */}
         <TouchableOpacity
-          style={[
-            styles.secondary,
-            { borderColor: colors.border },
-            disabled && styles.disabled,
-          ]}
+          style={[styles.actionBtnStop, disabled && styles.disabled]}
           onPress={handleStop}
           disabled={disabled}
           activeOpacity={0.8}
         >
           <View style={styles.buttonInner}>
-            <IconSymbol name="stop.circle.fill" size={20} color={colors.text} />
-            <Text style={[styles.secondaryText, { color: colors.text }]}>Stop</Text>
+            <IconSymbol name="stop.circle.fill" size={20} color="#fff" />
+            <Text style={styles.actionTextStop}>Stop</Text>
           </View>
         </TouchableOpacity>
       </View>
@@ -104,12 +87,9 @@ export function RecordingControls({
   if (phase === 'paused') {
     return (
       <View style={styles.row}>
+        {/* Resume — green, left/centre */}
         <TouchableOpacity
-          style={[
-            styles.primary,
-            { backgroundColor: colors.primary },
-            disabled && styles.disabled,
-          ]}
+          style={[styles.actionBtnResume, { backgroundColor: colors.success }, disabled && styles.disabled]}
           onPress={() => {
             void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             onResume();
@@ -117,21 +97,19 @@ export function RecordingControls({
           disabled={disabled}
           activeOpacity={0.8}
         >
-          <Text style={styles.primaryText}>Resume</Text>
+          <Text style={styles.actionTextStop}>Resume</Text>
         </TouchableOpacity>
+
+        {/* Stop — red outline, right */}
         <TouchableOpacity
-          style={[
-            styles.secondary,
-            { borderColor: colors.border },
-            disabled && styles.disabled,
-          ]}
+          style={[styles.actionBtn, { borderWidth: 1.5, borderColor: '#d32f2f' }, disabled && styles.disabled]}
           onPress={handleStop}
           disabled={disabled}
           activeOpacity={0.8}
         >
           <View style={styles.buttonInner}>
-            <IconSymbol name="stop.circle.fill" size={20} color={colors.text} />
-            <Text style={[styles.secondaryText, { color: colors.text }]}>Stop</Text>
+            <IconSymbol name="stop.circle.fill" size={20} color="#d32f2f" />
+            <Text style={[styles.actionText, { color: '#d32f2f' }]}>Stop</Text>
           </View>
         </TouchableOpacity>
       </View>
@@ -146,33 +124,40 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     gap: Spacing.sm,
-    paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.md,
   },
-  primary: {
+  actionBtn: {
     flex: 1,
     borderRadius: Radius.md,
     paddingVertical: Spacing.md + 2,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  primaryText: {
-    color: '#fff',
-    fontFamily: Typography.fontBold,
-    fontSize: Typography.sizes.base,
-  },
-  secondary: {
-    flex: 1,
+  actionBtnStop: {
+    flex: 1.3,
     borderRadius: Radius.md,
-    borderWidth: 1.5,
     paddingVertical: Spacing.md + 2,
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#d32f2f',
+  },
+  actionBtnResume: {
+    flex: 1.3,
+    borderRadius: Radius.md,
+    paddingVertical: Spacing.md + 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
-  secondaryText: {
+  actionText: {
+    fontFamily: Typography.fontBold,
+    fontSize: Typography.sizes.sm,
+  },
+  actionTextStop: {
+    color: '#fff',
     fontFamily: Typography.fontBold,
     fontSize: Typography.sizes.base,
   },

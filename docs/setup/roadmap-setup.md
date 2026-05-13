@@ -478,12 +478,12 @@ Convex is already in `package.json`. Before stage one, confirm the following are
 
 ### Checklist
 
-- [ ] `.env.local` contains `CONVEX_DEPLOYMENT` and `EXPO_PUBLIC_CONVEX_URL`
-- [ ] `npx convex dev` starts without errors and picks up `convex/schema.ts`
-- [ ] The `users`, `walks`, `trackPoints`, `walkPhotos`, `syncJobs`, `followSessions`, `offRouteEvents` tables are visible in the Convex dashboard
-- [ ] `convex/auth.config.ts` is created and points to the correct Clerk domain
-- [ ] `convex/users.ts` `upsertCurrentUser` mutation deploys successfully
-- [ ] A test sign-in from the app successfully creates a `users` document in the dashboard
+- [x] `.env.local` contains `CONVEX_DEPLOYMENT` and `EXPO_PUBLIC_CONVEX_URL`
+- [x] `npx convex dev` starts without errors and picks up `convex/schema.ts`
+- [x] The `users`, `walks`, `trackPoints`, `walkPhotos`, `syncJobs`, `followSessions`, `offRouteEvents` tables are visible in the Convex dashboard
+- [x] `convex/auth.config.ts` is created and points to the correct Clerk domain
+- [x] `convex/users.ts` `upsertCurrentUser` mutation deploys successfully
+- [x] A test sign-in from the app successfully creates a `users` document in the dashboard
 
 ---
 
@@ -599,7 +599,7 @@ Uses `useSafeAreaInsets()` for top padding. Background uses `Colors.background`.
 - [x] Delete template-only files listed in Section 1
 - [x] Remove `react-logo*` assets from `assets/images/`
 - [x] Remove `scripts/reset-project.js` (one-time utility, no longer needed)
-- [ ] Confirm the app still builds and runs after deletion
+- [x] Confirm the app still builds and runs after deletion
 
 ### Phase 2 – Create folder structure
 - [x] Create `components/shared/`, `components/recording/`, `components/review/`, `components/replay/` directories (add `.gitkeep` to empty ones)
@@ -613,10 +613,10 @@ Uses `useSafeAreaInsets()` for top padding. Background uses `Colors.background`.
 - [x] Update `components/themed-text.tsx` with full typography scale
 - [x] Update `components/themed-view.tsx` to use new colour tokens
 
-### Phase 4 – App icon and splash
-- [ ] Create/source branded icon and splash assets
-- [ ] Replace all placeholder image assets
-- [ ] Update `app.json` splash background colour
+### Phase 4 – App icon and splash ✅
+- [x] Create/source branded icon and splash assets
+- [x] Replace all placeholder image assets
+- [x] Update `app.json` splash background colour
 
 ### Phase 5 – Authentication
 - [x] Create Clerk account and application
@@ -642,12 +642,12 @@ Uses `useSafeAreaInsets()` for top padding. Background uses `Colors.background`.
 - [x] Run `npx convex dev` — confirm schema deploys clean
 - [] Install dev build (`npx expo run:ios` and/or `npx expo run:android`) to confirm native modules resolve
 
-### Phase 8 – Acceptance check
-- [ ] Fresh install on iOS simulator: splash → sign-up → three tabs visible → sign-out works
-- [ ] Fresh install on Android emulator: same flow
-- [ ] `npx convex dev` shows all 7 tables in dashboard
-- [ ] No TypeScript errors (`npx tsc --noEmit`)
-- [ ] No ESLint errors (`npx expo lint`)
+### Phase 8 – Acceptance check ✅
+- [x] Fresh install on iOS simulator: splash → sign-up → three tabs visible → sign-out works
+- [x] Fresh install on Android emulator: same flow
+- [x] `npx convex dev` shows all 7 tables in dashboard
+- [x] No TypeScript errors (`npx tsc --noEmit`)
+- [x] No ESLint errors (`npx expo lint`)
 
 ---
 

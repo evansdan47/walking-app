@@ -1,7 +1,7 @@
+import { Ionicons } from '@expo/vector-icons';
 import MapboxGL from '@rnmapbox/maps';
 import { useMemo } from 'react';
-import { StyleSheet, View } from 'react-native';
-import { Defs, LinearGradient, Path, Stop, Svg } from 'react-native-svg';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
 
 import { Colors } from '@/constants/theme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
@@ -26,80 +26,18 @@ function EndMarker() {
   return <View style={markerStyles.end} />;
 }
 
-// Cone geometry constants
-const DOT_R = 16;          // dot radius (px) — 32px dot diameter
-const CONE_LEN = 80;       // how far the cone extends from the dot centre
-const CONE_HALF_ANG = 25;  // half-angle of the cone in degrees
-
-/** SVG camera dot with a gradient heading cone radiating outward. */
-function PhotoConePin({ heading }: { heading: number | null }) {
-  // SVG canvas is square: (CONE_LEN + DOT_R) on each side, dot centred at (cx, cy).
-  // The cone tip starts at the dot centre and fans outward upward (north = 0°).
-  const size = (CONE_LEN + DOT_R) * 2;
-  const cx = size / 2;
-  const cy = size / 2;
-
-  // Cone arc points (tip at dot centre, fan opening upward before rotation)
-  const ang1 = (-90 - CONE_HALF_ANG) * (Math.PI / 180);
-  const ang2 = (-90 + CONE_HALF_ANG) * (Math.PI / 180);
-  const x1 = cx + CONE_LEN * Math.cos(ang1);
-  const y1 = cy + CONE_LEN * Math.sin(ang1);
-  const x2 = cx + CONE_LEN * Math.cos(ang2);
-  const y2 = cy + CONE_LEN * Math.sin(ang2);
-
-  // Gradient runs from dot centre (opaque) to the far edge (transparent)
-  const gradX2 = cx;
-  const gradY2 = cy - CONE_LEN;
-
+/** Blue circle camera marker — tap to open photo, long-press to zoom map. */
+function PhotoDotPin({ onLongPress }: { onLongPress?: () => void }) {
   return (
-    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
-      <Svg
-        width={size}
-        height={size}
-        style={{ position: 'absolute' }}
-        viewBox={`0 0 ${size} ${size}`}
-      >
-        <Defs>
-          <LinearGradient id="cone-grad" x1={cx} y1={cy} x2={gradX2} y2={gradY2} gradientUnits="userSpaceOnUse">
-            <Stop offset="0" stopColor="#1565c0" stopOpacity="0.85" />
-            <Stop offset="1" stopColor="#1565c0" stopOpacity="0" />
-          </LinearGradient>
-        </Defs>
-        {heading !== null && (
-          <Path
-            d={`M ${cx} ${cy} L ${x1} ${y1} A ${CONE_LEN} ${CONE_LEN} 0 0 1 ${x2} ${y2} Z`}
-            fill="url(#cone-grad)"
-            transform={`rotate(${heading}, ${cx}, ${cy})`}
-          />
-        )}
-        {/* Dot */}
-        <Path
-          d={`M ${cx} ${cy} m -${DOT_R} 0 a ${DOT_R} ${DOT_R} 0 1 0 ${DOT_R * 2} 0 a ${DOT_R} ${DOT_R} 0 1 0 -${DOT_R * 2} 0`}
-          fill="#1565c0"
-        />
-        {/* White ring */}
-        <Path
-          d={`M ${cx} ${cy} m -${DOT_R} 0 a ${DOT_R} ${DOT_R} 0 1 0 ${DOT_R * 2} 0 a ${DOT_R} ${DOT_R} 0 1 0 -${DOT_R * 2} 0`}
-          fill="none"
-          stroke="#fff"
-          strokeWidth="2.5"
-        />
-        {/* Camera icon — lens */}
-        <Path
-          d={`M ${cx} ${cy} m -6 0 a 6 6 0 1 0 12 0 a 6 6 0 1 0 -12 0`}
-          fill="#fff"
-          opacity="0.9"
-        />
-        {/* Camera icon — body outline */}
-        <Path
-          d={`M ${cx - 10} ${cy - 5} h 20 a 2 2 0 0 1 2 2 v 9 a 2 2 0 0 1 -2 2 h -20 a 2 2 0 0 1 -2 -2 v -9 a 2 2 0 0 1 2 -2 z`}
-          fill="none"
-          stroke="#fff"
-          strokeWidth="1.8"
-          opacity="0.7"
-        />
-      </Svg>
-    </View>
+    <TouchableOpacity
+      onLongPress={onLongPress}
+      activeOpacity={0.75}
+      style={markerStyles.photoDotHitArea}
+    >
+      <View style={markerStyles.photoDot}>
+        <Ionicons name="camera" size={14} color="#fff" />
+      </View>
+    </TouchableOpacity>
   );
 }
 
@@ -132,10 +70,29 @@ interface ReviewRouteLayerProps {
   photos?: WalkPhoto[];
   /** Called when the user taps a photo annotation. */
   onPhotoTap?: (photo: WalkPhoto) => void;
+  /** Called when the user long-presses a photo annotation. */
+  onPhotoLongPress?: (photo: WalkPhoto) => void;
   /** Controls how the route polyline is coloured. Defaults to 'route'. */
   mode?: RouteDisplayMode;
   /** Override the positive/negative/neutral segment colours. */
   colours?: RouteColours;
+  /** Show photo dot markers on the map. Defaults to false. */
+  showPhotoMarkers?: boolean;
+  /**
+   * Bottom padding (px) passed to the Camera bounds fit — use to keep the
+   * route above the bottom sheet.  Defaults to 300.
+   */
+  cameraPaddingBottom?: number;
+  /**
+   * Top padding (px) passed to the Camera bounds fit — use to keep the
+   * route below the header.  Defaults to 80.
+   */
+  cameraPaddingTop?: number;
+  /**
+   * When set, the camera animates to center on this coordinate at zoom 16
+   * (e.g. after a photo marker long-press).  Pass null to return to route fit.
+   */
+  focusCoordinate?: [number, number] | null;
 }
 
 /**
@@ -149,7 +106,7 @@ interface ReviewRouteLayerProps {
  * Renders nothing when points is empty — the parent screen should show a
  * placeholder in that case rather than relying on this component.
  */
-export function ReviewRouteLayer({ points, photos = [], onPhotoTap, mode = 'route', colours }: ReviewRouteLayerProps) {
+export function ReviewRouteLayer({ points, photos = [], onPhotoTap, onPhotoLongPress, mode = 'route', colours, showPhotoMarkers = false, cameraPaddingBottom = 300, cameraPaddingTop = 80, focusCoordinate = null }: ReviewRouteLayerProps) {
   const routeGeoJSON = useMemo(() => buildRouteGeoJSON(points), [points]);
   const segmentedGeoJSON = useMemo(
     () => buildSegmentedRoute(points, mode, colours),
@@ -159,22 +116,42 @@ export function ReviewRouteLayer({ points, photos = [], onPhotoTap, mode = 'rout
 
   if (points.length === 0) return null;
 
+  // Camera key changes whenever we switch between route-fit and photo-focus,
+  // or when padding changes, so Mapbox always re-animates.
+  const cameraKey = focusCoordinate
+    ? `focus-${focusCoordinate[0].toFixed(6)},${focusCoordinate[1].toFixed(6)}-${cameraPaddingBottom}`
+    : `bounds-${cameraPaddingBottom}`;
+
   return (
     <>
-      {/* Camera: fit to bounding box with padding so the route is never clipped */}
-      {bounds && (
+      {/* Camera: zoom to focused photo, or fit the full route */}
+      {focusCoordinate ? (
         <MapboxGL.Camera
-          bounds={{
-            ne: bounds.ne,
-            sw: bounds.sw,
-            paddingTop: 80,
-            paddingBottom: 300, // leave room for collapsed bottom sheet
+          key={cameraKey}
+          centerCoordinate={focusCoordinate}
+          zoomLevel={16}
+          animationDuration={400}
+          padding={{
+            paddingTop: cameraPaddingTop,
+            paddingBottom: cameraPaddingBottom,
             paddingLeft: 40,
             paddingRight: 40,
           }}
-          animationDuration={0}
         />
-      )}
+      ) : bounds ? (
+        <MapboxGL.Camera
+          key={cameraKey}
+          bounds={{
+            ne: bounds.ne,
+            sw: bounds.sw,
+            paddingTop: cameraPaddingTop,
+            paddingBottom: cameraPaddingBottom,
+            paddingLeft: 40,
+            paddingRight: 40,
+          }}
+          animationDuration={300}
+        />
+      ) : null}
 
       {/* Route polyline — single colour for 'route' mode, per-segment colour otherwise */}
       {points.length >= 2 && mode === 'route' && (
@@ -225,15 +202,15 @@ export function ReviewRouteLayer({ points, photos = [], onPhotoTap, mode = 'rout
         </MapboxGL.PointAnnotation>
       )}
 
-      {/* Photo pins */}
-      {photos.map((photo) => (
+      {/* Photo dot markers — only shown when Photos tab is active */}
+      {showPhotoMarkers && photos.map((photo) => (
         <MapboxGL.PointAnnotation
           key={photo.id}
           id={`review-photo-${photo.id}`}
           coordinate={[photo.longitude, photo.latitude]}
           onSelected={() => onPhotoTap?.(photo)}
         >
-          <PhotoConePin heading={photo.heading} />
+          <PhotoDotPin onLongPress={() => onPhotoLongPress?.(photo)} />
         </MapboxGL.PointAnnotation>
       ))}
     </>
@@ -261,14 +238,25 @@ const markerStyles = StyleSheet.create({
     borderWidth: 2,
     borderColor: '#fff',
   },
-  photo: {
-    // kept for fallback reference but PhotoConePin uses SVG now
+  photoDotHitArea: {
+    // Enlarged touch target around the visible dot
+    padding: 6,
+  },
+  photoDot: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#1565c0',
+    backgroundColor: '#1976d2',
     borderWidth: 2.5,
     borderColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Subtle shadow so it lifts off the map
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.35,
+    shadowRadius: 2,
+    elevation: 3,
   },
   walkStart: {
     width: 10,

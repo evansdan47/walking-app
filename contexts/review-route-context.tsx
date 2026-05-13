@@ -4,21 +4,21 @@ import type { WalkPhoto } from '@/lib/db/walk-photos';
 import type { RoutePoint } from '@/lib/review/build-route';
 
 interface ReviewRouteContextValue {
-  /** Route points for the currently open walk review (empty when none). */
+  /** Route points for the currently open walk summary (empty when none). */
   reviewRoute: RoutePoint[];
-  /** Photos for the currently open walk review. */
+  /** Photos for the currently open walk summary. */
   reviewPhotos: WalkPhoto[];
   /** Callback to invoke when the user taps a photo pin on the map. */
   onPhotoTap: ((photo: WalkPhoto) => void) | undefined;
-  /** True when a walk-review screen is open and has pushed its data. */
+  /** True when a walk-summary screen is open and has pushed its data. */
   isReviewActive: boolean;
-  /** Called by walk-review on mount to populate data into the shared map. */
+  /** Called by walk-summary on mount to populate data into the shared map. */
   setReviewData: (
     route: RoutePoint[],
     photos: WalkPhoto[],
     onPhotoTap: (photo: WalkPhoto) => void,
   ) => void;
-  /** Called by walk-review on unmount to clear the shared map overlay. */
+  /** Called by walk-summary on unmount to clear the shared map overlay. */
   clearReviewData: () => void;
 }
 

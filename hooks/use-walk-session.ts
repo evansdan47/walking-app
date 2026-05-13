@@ -121,7 +121,7 @@ export function useWalkSession() {
     // Post-processing is async — when done, navigate to review
     void runPostProcessing(walkId, stepCount).then(() => {
       setState({ phase: 'completed', walkId });
-      router.push({ pathname: '/walk-review', params: { walkId } });
+      router.push({ pathname: '/walk-summary', params: { walkId } });
     });
   }, [state, stopTracking, router]);
 

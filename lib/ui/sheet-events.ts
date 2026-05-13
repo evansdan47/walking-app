@@ -3,7 +3,7 @@
  * from anywhere in the app (e.g. the recording indicator bar → record sheet).
  */
 
-type SheetTab = 'record' | 'library' | 'profile';
+type SheetTab = 'record' | 'explore' | 'sessions' | 'profile';
 type Listener = (sheet: SheetTab) => void;
 
 const listeners = new Set<Listener>();

@@ -82,6 +82,23 @@ try { db.execSync(`ALTER TABLE walks ADD COLUMN is_live INTEGER NOT NULL DEFAULT
 try { db.execSync(`ALTER TABLE track_points ADD COLUMN synced_at INTEGER`); } catch {}
 try { db.execSync(`CREATE INDEX IF NOT EXISTS idx_track_points_unsynced ON track_points(walk_id, synced_at) WHERE synced_at IS NULL`); } catch {}
 
+// Phase 13f: waypoints table for Save Point feature.
+try {
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS waypoints (
+      id          TEXT PRIMARY KEY NOT NULL,
+      walk_id     TEXT NOT NULL REFERENCES walks(id),
+      timestamp   INTEGER NOT NULL,
+      latitude    REAL NOT NULL,
+      longitude   REAL NOT NULL,
+      name        TEXT,
+      type        TEXT,
+      note        TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_waypoints_walk ON waypoints(walk_id);
+  `);
+} catch {}
+
 export function getKv(key: string): string | null {
   const row = db.getFirstSync<{ value: string }>(`SELECT value FROM kv_store WHERE key = ?`, key);
   return row?.value ?? null;

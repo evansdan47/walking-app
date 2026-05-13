@@ -66,6 +66,38 @@ export function getPhotosForWalk(walkId: string): WalkPhoto[] {
   return rows.map(rowToPhoto);
 }
 
+/**
+ * Returns a map of walkId → photo count for the given walk IDs.
+ * Uses a single GROUP BY query for efficiency.
+ */
+export function getPhotoCountsForWalks(walkIds: string[]): Map<string, number> {
+  if (walkIds.length === 0) return new Map();
+  const placeholders = walkIds.map(() => '?').join(',');
+  const rows = db.getAllSync<{ walk_id: string; cnt: number }>(
+    `SELECT walk_id, COUNT(*) as cnt FROM walk_photos WHERE walk_id IN (${placeholders}) GROUP BY walk_id`,
+    ...walkIds,
+  );
+  return new Map(rows.map((r) => [r.walk_id, r.cnt]));
+}
+
+/**
+ * Returns the first N photos for each walk in the given list, ordered by timestamp.
+ * Returns a map of walkId → WalkPhoto[].
+ */
+export function getFirstPhotosForWalks(walkIds: string[], limit = 5): Map<string, WalkPhoto[]> {
+  if (walkIds.length === 0) return new Map();
+  const result = new Map<string, WalkPhoto[]>();
+  for (const id of walkIds) {
+    const rows = db.getAllSync<WalkPhotoRow>(
+      `SELECT * FROM walk_photos WHERE walk_id = ? ORDER BY timestamp ASC LIMIT ?`,
+      id,
+      limit,
+    );
+    result.set(id, rows.map(rowToPhoto));
+  }
+  return result;
+}
+
 export function updatePhotoAfterSync(
   id: string,
   convexId: string,

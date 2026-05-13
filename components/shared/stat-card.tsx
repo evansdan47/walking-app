@@ -97,11 +97,10 @@ const styles = StyleSheet.create({
   card: {
     borderRadius: Radius.md,
     paddingHorizontal: Spacing.base,
-    paddingVertical: Spacing.md,
+    paddingVertical: Spacing.sm,
     borderWidth: 1,
     flex: 1,
-    minHeight: 76,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
   },
   label: {
     fontFamily: Typography.fontMedium,

@@ -22,6 +22,8 @@ const MAPPING = {
   'list.bullet': 'format-list-bulleted',
   'figure.walk': 'directions-walk',
   'person.circle': 'account-circle',
+  'safari': 'explore',
+  'map': 'map',
   // Recording controls
   'record.circle.fill': 'fiber-manual-record',
   'pause.circle.fill': 'pause-circle-filled',
@@ -34,9 +36,11 @@ const MAPPING = {
   'location.fill': 'location-on',
   'checkmark.circle.fill': 'check-circle',
   'xmark.circle.fill': 'cancel',
+  'xmark': 'close',
   'arrow.left': 'arrow-back',
   'gear': 'settings',
   'person.fill': 'person',
+  'bookmark.fill': 'bookmark',
 } as IconMapping;
 
 /**

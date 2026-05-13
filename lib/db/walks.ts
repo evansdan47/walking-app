@@ -16,6 +16,11 @@ export interface WalkStats {
   avgHeartRateBpm?: number | undefined;
   maxHeartRateBpm?: number | undefined;
   hcSynced?: boolean | undefined;
+  // Elevation detail — present only when altitude coverage is sufficient (Phase 4b)
+  longestAscentMetres?: number | undefined;
+  steepestAscentGradientPct?: number | undefined;
+  longestDescentMetres?: number | undefined;
+  steepestDescentGradientPct?: number | undefined;
 }
 
 export interface Walk {
@@ -133,7 +138,67 @@ export function updateWalkTitle(walkId: string, title: string): void {
   db.runSync(`UPDATE walks SET title = ? WHERE id = ?`, title, walkId);
 }
 
+export function listCompletedWalksSince(fromTs: number): Walk[] {
+  const rows = db.getAllSync<WalkRow>(
+    `SELECT * FROM walks WHERE status = 'completed' AND started_at >= ? ORDER BY started_at DESC`,
+    fromTs,
+  );
+  return rows.map(rowToWalk);
+}
+
+export interface WeekBucket {
+  /** Monday of the week (start of day, local midnight) as a Unix ms timestamp. */
+  weekStart: number;
+  distanceMetres: number;
+  sessionCount: number;
+  durationSeconds: number;
+}
+
+/**
+ * Returns a WeekBucket for each of the last `numWeeks` ISO weeks (Mon–Sun),
+ * newest last (so index 0 = oldest, last index = current/most recent week).
+ */
+export function getWeeklyStats(numWeeks = 8): WeekBucket[] {
+  // Find the Monday of the current week in local time.
+  const now = new Date();
+  const dow = now.getDay(); // 0=Sun, 1=Mon ...
+  const daysSinceMonday = (dow + 6) % 7; // Mon=0 ... Sun=6
+  const thisMonday = new Date(now);
+  thisMonday.setHours(0, 0, 0, 0);
+  thisMonday.setDate(thisMonday.getDate() - daysSinceMonday);
+
+  const buckets: WeekBucket[] = [];
+  for (let i = numWeeks - 1; i >= 0; i--) {
+    const weekStart = new Date(thisMonday);
+    weekStart.setDate(thisMonday.getDate() - i * 7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekStart.getDate() + 7);
+    buckets.push({
+      weekStart: weekStart.getTime(),
+      distanceMetres: 0,
+      sessionCount: 0,
+      durationSeconds: 0,
+    });
+
+    const rows = db.getAllSync<WalkRow>(
+      `SELECT * FROM walks WHERE status = 'completed' AND started_at >= ? AND started_at < ?`,
+      weekStart.getTime(),
+      weekEnd.getTime(),
+    );
+    for (const row of rows) {
+      const walk = rowToWalk(row);
+      buckets[buckets.length - 1]!.sessionCount += 1;
+      if (walk.stats) {
+        buckets[buckets.length - 1]!.distanceMetres += walk.stats.distanceMetres;
+        buckets[buckets.length - 1]!.durationSeconds += walk.stats.durationSeconds;
+      }
+    }
+  }
+  return buckets;
+}
+
 export function deleteWalk(walkId: string): void {
+
   // Delete dependent rows first, then the walk itself.
   db.runSync(`DELETE FROM track_points WHERE walk_id = ?`, walkId);
   db.runSync(`DELETE FROM walk_photos WHERE walk_id = ?`, walkId);
