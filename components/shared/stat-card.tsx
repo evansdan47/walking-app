@@ -1,8 +1,8 @@
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 
 type Size = 'xs' | 'sm' | 'md' | 'lg';
 

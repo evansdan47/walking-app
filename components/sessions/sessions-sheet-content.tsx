@@ -4,12 +4,14 @@ import { useConvex } from 'convex/react';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
+import { BlurView } from 'expo-blur';
 import {
-  ActivityIndicator,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
+    ActivityIndicator,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -106,9 +108,11 @@ interface WalkEnrichment {
 interface SessionsSheetContentProps {
   /** True while the sheet is open — triggers a data reload each time it becomes true. */
   isOpen: boolean;
+  /** Called before navigating to a walk summary — use to collapse the sheet first. */
+  onOpenWalk?: (walkId: string) => void;
 }
 
-export function SessionsSheetContent({ isOpen }: SessionsSheetContentProps) {
+export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetContentProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const insets = useSafeAreaInsets();
@@ -181,15 +185,30 @@ export function SessionsSheetContent({ isOpen }: SessionsSheetContentProps) {
   };
 
   const handleWalkPress = (walkId: string) => {
-    router.push({ pathname: '/walk-summary', params: { walkId } });
+    if (onOpenWalk) {
+      onOpenWalk(walkId);
+    } else {
+      router.push({ pathname: '/walk-summary', params: { walkId } });
+    }
   };
 
   return (
-    <BottomSheetScrollView
-      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + Spacing.lg }]}
-    >
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: colors.border }]}>
+    <View style={styles.sheetContainer}>
+      {/* ── Frosted glass header (title + subtitle + sync only) ── */}
+      <BlurView
+        intensity={Platform.OS === 'ios' ? 80 : 0}
+        tint={scheme === 'dark' ? 'dark' : 'light'}
+        style={[styles.frostedHeader, { borderBottomColor: colors.border }]}
+      >
+        {/* Android: BlurView won't blur native views, overlay a tint instead */}
+        {Platform.OS === 'android' && (
+          <View
+            style={[
+              StyleSheet.absoluteFillObject,
+              { backgroundColor: colors.background + 'D8' },
+            ]}
+          />
+        )}
         <View style={styles.headerTitleRow}>
           <View style={styles.headerTitleBlock}>
             <Text style={[styles.headerTitle, { color: colors.text }]}>Sessions</Text>
@@ -216,12 +235,17 @@ export function SessionsSheetContent({ isOpen }: SessionsSheetContentProps) {
             )}
           </View>
         </View>
-      </View>
+      </BlurView>
 
-      {/* Perspective switcher */}
-      <View style={styles.switcherWrapper}>
-        <PerspectiveSwitcher value={perspective} onChange={setPerspective} />
-      </View>
+      {/* ── Scrollable content (solid background) ───────────────── */}
+      <BottomSheetScrollView
+        style={{ backgroundColor: colors.background }}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + Spacing.lg }]}
+      >
+        {/* Perspective switcher — sits just below the frosted header divider */}
+        <View style={styles.switcherWrapper}>
+          <PerspectiveSwitcher value={perspective} onChange={setPerspective} />
+        </View>
 
       {/* Weekly summary card */}
       {perspective === 'recent' && activeBuckets.length > 0 && (
@@ -267,19 +291,24 @@ export function SessionsSheetContent({ isOpen }: SessionsSheetContentProps) {
           <Text style={[styles.comingSoonText, { color: colors.textMuted }]}>Coming soon</Text>
         </View>
       )}
-    </BottomSheetScrollView>
+      </BottomSheetScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  content: {
-    flexGrow: 1,
+  sheetContainer: {
+    flex: 1,
   },
-  header: {
+  frostedHeader: {
     borderBottomWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.sm,
-    paddingBottom: Spacing.sm,
+    paddingBottom: Spacing.base,
+    overflow: 'hidden',
+  },
+  scrollContent: {
+    flexGrow: 1,
   },
   headerTitleRow: {
     flexDirection: 'row',

@@ -1,12 +1,12 @@
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Polyline } from 'react-native-svg';
 
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import type { Walk } from '@/lib/db/walks';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { METRIC_ICONS } from '@/constants/metric-icons';
 
 const PHOTO_THUMB_SIZE = 88;
 const ROUTE_THUMB_SIZE = 64;

@@ -1,11 +1,11 @@
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+import { METRIC_ICONS } from '@/constants/metric-icons';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkStats } from '@/lib/db/walks';
 import { StatCard } from './stat-card';
 import { StatGrid } from './stat-grid';
-import { METRIC_ICONS } from '@/constants/metric-icons';
 
 interface WalkSummaryCardProps {
   walk: {

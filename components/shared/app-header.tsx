@@ -15,9 +15,11 @@ interface AppHeaderProps {
   rightAction?: ReactNode;
   /** Replaces the centre title text with a custom node (e.g. a TextInput). */
   centerContent?: ReactNode;
+  /** Style overrides applied to the outermost container ThemedView. */
+  containerStyle?: import('react-native').ViewStyle;
 }
 
-export function AppHeader({ title, onBack, rightAction, centerContent }: AppHeaderProps) {
+export function AppHeader({ title, onBack, rightAction, centerContent, containerStyle }: AppHeaderProps) {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const colorScheme = useColorScheme();
@@ -33,6 +35,7 @@ export function AppHeader({ title, onBack, rightAction, centerContent }: AppHead
           paddingTop: insets.top + Spacing.sm,
           borderBottomColor: colors.border,
         },
+        containerStyle,
       ]}
     >
       <View style={styles.row}>

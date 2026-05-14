@@ -3,29 +3,30 @@ import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetFlatList, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useConvex, useMutation } from 'convex/react';
 import Constants from 'expo-constants';
+import { BlurView } from 'expo-blur';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    AppState,
-    BackHandler,
-    Dimensions,
-    LayoutAnimation,
-    Linking,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    UIManager,
-    useWindowDimensions,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  AppState,
+  BackHandler,
+  Dimensions,
+  LayoutAnimation,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  UIManager,
+  useWindowDimensions,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -48,8 +49,8 @@ import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { RouteColourPicker } from '@/components/ui/route-colour-picker';
-import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { METRIC_ICONS } from '@/constants/metric-icons';
+import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useReviewRoute } from '@/contexts/review-route-context';
 import { useWalkSessionContext } from '@/contexts/walk-session-context';
 import { api } from '@/convex/_generated/api';
@@ -61,12 +62,12 @@ import { useStepCounter } from '@/hooks/use-step-counter';
 import { DEFAULT_STAT_PANEL_ORDER, useUserPreferences } from '@/hooks/use-user-preferences';
 import { getPhotosForWalk, type WalkPhoto } from '@/lib/db/walk-photos';
 import {
-    checkHealthConnectPermissions,
-    isHealthConnectAvailable,
-    isHealthConnectUpdateRequired,
-    openHealthConnectAppSettings,
-    openHealthConnectMainSettings,
-    requestHealthConnectPermissions,
+  checkHealthConnectPermissions,
+  isHealthConnectAvailable,
+  isHealthConnectUpdateRequired,
+  openHealthConnectAppSettings,
+  openHealthConnectMainSettings,
+  requestHealthConnectPermissions,
 } from '@/lib/health-connect';
 import { sheetEvents } from '@/lib/ui/sheet-events';
 import Slider from '@react-native-community/slider';
@@ -428,9 +429,18 @@ function RecordSheetContent({
 
   // Idle or active → show stat grid (zeros when idle)
   return (
-    <>
-      {/* Fixed header — always visible regardless of sheet height */}
-      <View style={[sheetStyles.recordFixedHeader, { borderBottomColor: colors.border }]}>
+    <View style={{ flex: 1 }}>
+      {/* Frosted glass header — elapsed timer + controls */}
+      <BlurView
+        intensity={Platform.OS === 'ios' ? 80 : 0}
+        tint={colors.background === '#1c1917' ? 'dark' : 'light'}
+        style={[sheetStyles.recordFixedHeader, { borderBottomColor: colors.border }]}
+      >
+        {Platform.OS === 'android' && (
+          <View
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.background + 'D8' }]}
+          />
+        )}
         {/* Full-width elapsed timer */}
         <ElapsedTimer
           startedAt={startedAt}
@@ -447,10 +457,11 @@ function RecordSheetContent({
           onResume={() => { void resume(); }}
           onStop={() => { void stop(stopCountRef.current); }}
         />
-      </View>
+      </BlurView>
 
-      {/* Scrollable stats area */}
+      {/* Scrollable stats area — solid background */}
       <BottomSheetScrollView
+        style={{ backgroundColor: colors.background }}
         contentContainerStyle={[
           sheetStyles.content,
           { paddingBottom: insets.bottom + Spacing.base },
@@ -490,7 +501,7 @@ function RecordSheetContent({
           </View>
         </View>
       </BottomSheetScrollView>
-    </>
+    </View>
   );
 }
 
@@ -1009,28 +1020,46 @@ function ProfileSheetContent({
   };
 
   return (
-    <BottomSheetScrollView
-      contentContainerStyle={[
-        sheetStyles.content,
-        sheetStyles.profileContent,
-        { paddingBottom: insets.bottom + Spacing.base },
-      ]}
-    >
-      <View style={[sheetStyles.avatar, { backgroundColor: colors.primary + '22', borderColor: colors.border }]}>
-        <Text style={[sheetStyles.avatarLetter, { color: colors.primary }]}>
-          {displayName.charAt(0).toUpperCase()}
-        </Text>
-      </View>
-      <Text style={[sheetStyles.profileName, { color: colors.text }]}>{displayName}</Text>
-      {email ? (
-        <Text style={[sheetStyles.profileEmail, { color: colors.textMuted }]}>{email}</Text>
-      ) : null}
-      <Pressable
-        style={[sheetStyles.signOutButton, { borderColor: colors.border }]}
-        onPress={handleSignOut}
+    <View style={{ flex: 1 }}>
+      {/* ── Frosted glass header: avatar + name + email + sign out ── */}
+      <BlurView
+        intensity={Platform.OS === 'ios' ? 80 : 0}
+        tint={colors.background === '#1c1917' ? 'dark' : 'light'}
+        style={[
+          sheetStyles.profileFrostedHeader,
+          { borderBottomColor: colors.border },
+        ]}
       >
-        <Text style={[sheetStyles.signOutText, { color: colors.textMuted }]}>Sign Out</Text>
-      </Pressable>
+        {Platform.OS === 'android' && (
+          <View
+            style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.background + 'D8' }]}
+          />
+        )}
+        <View style={[sheetStyles.avatar, { backgroundColor: colors.primary + '22', borderColor: colors.border }]}>
+          <Text style={[sheetStyles.avatarLetter, { color: colors.primary }]}>
+            {displayName.charAt(0).toUpperCase()}
+          </Text>
+        </View>
+        <Text style={[sheetStyles.profileName, { color: colors.text }]}>{displayName}</Text>
+        {email ? (
+          <Text style={[sheetStyles.profileEmail, { color: colors.textMuted, marginBottom: Spacing.base }]}>{email}</Text>
+        ) : null}
+        <Pressable
+          style={[sheetStyles.signOutButton, { borderColor: colors.border }]}
+          onPress={handleSignOut}
+        >
+          <Text style={[sheetStyles.signOutText, { color: colors.textMuted }]}>Sign Out</Text>
+        </Pressable>
+      </BlurView>
+
+      {/* ── Solid content: accordions ── */}
+      <BottomSheetScrollView
+        style={{ backgroundColor: colors.background }}
+        contentContainerStyle={[
+          sheetStyles.content,
+          { paddingBottom: insets.bottom + Spacing.base },
+        ]}
+      >
 
       {/* ── Preferences ── */}
       <SheetAccordion title="Preferences" icon="options-outline" colors={colors} defaultOpen>
@@ -1156,7 +1185,8 @@ function ProfileSheetContent({
       </SheetAccordion>
 
       <Text style={[sheetStyles.version, { color: colors.textMuted }]}>v{appVersion}</Text>
-    </BottomSheetScrollView>
+      </BottomSheetScrollView>
+    </View>
   );
 }
 
@@ -1323,7 +1353,7 @@ export default function MapScreen() {
 
   // Mount the live-sync hook; it self-gates on isLive and phase.
   useLiveWalkSync();
-  const { isReviewActive, reviewRoute, reviewPhotos, onPhotoTap } = useReviewRoute();
+  const { isReviewActive, reviewRoute, reviewPhotos, onPhotoTap, reviewOverlayOptions } = useReviewRoute();
   const { flags, setFlag } = useFeatureFlags();
 
   const activeWalkId =
@@ -1346,6 +1376,27 @@ export default function MapScreen() {
   // Sheet state
   const [activeSheet, setActiveSheet] = useState<SheetTab | null>(null);
   const sheetRef = useRef<BottomSheet>(null);
+
+  // Tracks which sheet was open before navigating to a walk review so we can
+  // restore it when the transparentModal is dismissed.
+  const reviewEntrySheetRef = useRef<SheetTab | null>(null);
+
+  // When isReviewActive drops back to false the walk-summary modal has closed
+  // — reopen whichever sheet was showing before we navigated in.
+  const prevIsReviewActive = useRef(false);
+  useEffect(() => {
+    if (!isReviewActive && prevIsReviewActive.current && reviewEntrySheetRef.current !== null) {
+      const tabToRestore = reviewEntrySheetRef.current;
+      reviewEntrySheetRef.current = null;
+      // Brief delay lets the modal dismiss animation finish first.
+      setTimeout(() => {
+        setActiveSheet(tabToRestore);
+        scheduleSnap(0);
+      }, 350);
+    }
+    prevIsReviewActive.current = isReviewActive;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isReviewActive]);
 
   // Cancel-then-schedule pattern: always clear any pending snap before
   // scheduling a new one so rapid taps can never stack concurrent
@@ -1678,6 +1729,13 @@ export default function MapScreen() {
             points={reviewRoute}
             photos={reviewPhotos}
             {...(onPhotoTap ? { onPhotoTap } : {})}
+            cameraPaddingBottom={reviewOverlayOptions.cameraPaddingBottom}
+            cameraPaddingTop={reviewOverlayOptions.cameraPaddingTop}
+            showPhotoMarkers={reviewOverlayOptions.showPhotoMarkers}
+            focusCoordinate={reviewOverlayOptions.focusCoordinate}
+            onPhotoLongPress={reviewOverlayOptions.onPhotoLongPress}
+            mode={reviewOverlayOptions.mode}
+            colours={reviewOverlayOptions.colours}
           />
         )}
       </MapboxGL.MapView>
@@ -1728,7 +1786,7 @@ export default function MapScreen() {
         index={-1}
         enableDynamicSizing={false}
         enablePanDownToClose
-        backgroundStyle={{ backgroundColor: colors.background }}
+        backgroundStyle={{ backgroundColor: 'transparent' }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
           setSheetSnapIndex(index);
@@ -1759,7 +1817,16 @@ export default function MapScreen() {
         }}
       >
         {activeSheet === 'sessions' && (
-          <SessionsSheetContent isOpen={activeSheet === 'sessions'} />
+          <SessionsSheetContent
+            isOpen={activeSheet === 'sessions'}
+            onOpenWalk={(walkId) => {
+              reviewEntrySheetRef.current = 'sessions';
+              ignoreNextCloseRef.current = true;
+              sheetRef.current?.close();
+              setActiveSheet(null);
+              router.push({ pathname: '/walk-summary', params: { walkId } });
+            }}
+          />
         )}
         {activeSheet === 'record' && (
           <RecordSheetContent
@@ -2009,6 +2076,7 @@ const sheetStyles = StyleSheet.create({
     paddingBottom: Spacing.sm,
     gap: Spacing.sm,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
   },
   sectionLabel: {
     fontFamily: Typography.fontMedium,
@@ -2053,6 +2121,14 @@ const sheetStyles = StyleSheet.create({
   flagLabel: { flex: 1, gap: 2 },
   flagName: { fontFamily: Typography.fontMedium, fontSize: Typography.sizes.sm },
   flagDesc: { fontFamily: Typography.fontRegular, fontSize: Typography.sizes.xs },
+  profileFrostedHeader: {
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.base,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
   profileContent: { alignItems: 'center', flexGrow: 1 },
   avatar: {
     width: 80,

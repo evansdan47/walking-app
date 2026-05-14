@@ -1,15 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetScrollView } from '@gorhom/bottom-sheet';
+import { BlurView } from 'expo-blur';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-
-import MapboxGL from '@rnmapbox/maps';
 
 import { PhotoViewerCarousel } from '@/components/review/photo-viewer-carousel';
 import { ReviewActionBar } from '@/components/review/review-action-bar';
-import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { ReviewTabBar, type TabDef } from '@/components/review/review-tab-bar';
 import { TabElevation } from '@/components/review/tab-elevation';
 import { TabHealthStats } from '@/components/review/tab-health-stats';
@@ -18,6 +16,7 @@ import { TabTraining } from '@/components/review/tab-training';
 import { TabWalkStats } from '@/components/review/tab-walk-stats';
 import { AppHeader } from '@/components/shared/app-header';
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useReviewRoute } from '@/contexts/review-route-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRouteColours } from '@/hooks/use-route-colours';
 import { useUserPreferences } from '@/hooks/use-user-preferences';
@@ -64,6 +63,42 @@ export default function WalkSummaryScreen() {
   const [activeTab, setActiveTab] = useState<string>('walk');
   const [sheetOpen, setSheetOpen] = useState(true);
   const [focusPhotoCoordinate, setFocusPhotoCoordinate] = useState<[number, number] | null>(null);
+
+  // ── Shared map integration ─────────────────────────────────────────────
+  // Push route + photos to the always-mounted map in index.tsx instead of
+  // rendering our own MapboxGL.MapView (avoids the cold-start flash).
+  const { setReviewData, setReviewOverlayOptions, clearReviewData } = useReviewRoute();
+
+  // Mount: push route data; Unmount: clear so the main map returns to live view.
+  const onPhotoTap = useCallback(
+    (photo: { id: string; longitude: number; latitude: number }) => {
+      const idx = photos.findIndex((p) => p.id === photo.id);
+      setSelectedPhotoIndex(idx >= 0 ? idx : 0);
+    },
+    [photos],
+  );
+  useEffect(() => {
+    if (route.length === 0) return;
+    setReviewData(route, photos, onPhotoTap);
+    return () => { clearReviewData(); };
+    // intentionally omit setReviewData / clearReviewData (stable callbacks)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route, photos, onPhotoTap]);
+
+  // Sync display options whenever camera padding, mode, or tab changes.
+  useEffect(() => {
+    setReviewOverlayOptions({
+      cameraPaddingBottom: sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60,
+      cameraPaddingTop: insets.top + 60,
+      showPhotoMarkers: activeTab === 'photos',
+      focusCoordinate: focusPhotoCoordinate,
+      onPhotoLongPress: (photo: { longitude: number; latitude: number }) =>
+        setFocusPhotoCoordinate([photo.longitude, photo.latitude]),
+      mode: displayMode,
+      colours,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheetOpen, screenHeight, insets.bottom, insets.top, activeTab, focusPhotoCoordinate, displayMode, colours]);
 
   // Until Replaying Phase 1 adds followSessionId to the walks table,
   // all walks are treated as free walks and Save Route is always shown.
@@ -119,31 +154,6 @@ export default function WalkSummaryScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Own interactive map — full screen behind the bottom sheet */}
-      <MapboxGL.MapView
-        style={StyleSheet.absoluteFill}
-        styleURL={MapboxGL.StyleURL.Outdoors}
-        logoEnabled={false}
-        attributionEnabled={false}
-        compassEnabled={false}
-      >
-        <ReviewRouteLayer
-          points={route}
-          photos={photos}
-          onPhotoTap={(photo) => {
-            const idx = photos.findIndex((p) => p.id === photo.id);
-            setSelectedPhotoIndex(idx >= 0 ? idx : 0);
-          }}
-          showPhotoMarkers={activeTab === 'photos'}
-          mode={displayMode}
-          colours={colours}
-          cameraPaddingBottom={sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60}
-          cameraPaddingTop={insets.top + 60}
-          focusCoordinate={focusPhotoCoordinate}
-          onPhotoLongPress={(photo) => setFocusPhotoCoordinate([photo.longitude, photo.latitude])}
-        />
-      </MapboxGL.MapView>
-
       {/* Photo viewer carousel — renders over everything */}
       {selectedPhotoIndex !== null && (
         <PhotoViewerCarousel
@@ -227,11 +237,20 @@ export default function WalkSummaryScreen() {
         </View>
       </Modal>
 
-      {/* App header — absolute overlay at top */}
+      {/* App header — frosted glass absolute overlay at top */}
       <View style={styles.headerOverlay} pointerEvents="box-none">
+        <BlurView
+          intensity={Platform.OS === 'ios' ? 80 : 0}
+          tint={scheme === 'dark' ? 'dark' : 'light'}
+          style={StyleSheet.absoluteFill}
+        />
+        {Platform.OS === 'android' && (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.background + 'D8' }]} />
+        )}
         <AppHeader
           title={displayTitle}
           onBack={editingTitle ? handleCancelTitle : undefined}
+          containerStyle={{ backgroundColor: 'transparent', borderBottomWidth: 0 }}
           centerContent={
             editingTitle ? (
               <TextInput
@@ -283,32 +302,43 @@ export default function WalkSummaryScreen() {
         snapPoints={['75%']}
         enableDynamicSizing={false}
         enablePanDownToClose
-        backgroundStyle={{ backgroundColor: colors.backgroundCard }}
+        backgroundStyle={{ backgroundColor: 'transparent' }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
           if (index === -1) setSheetOpen(false);
           else if (!sheetOpen) setSheetOpen(true);
         }}
       >
-        {/* Fixed tab bar — sits above the scroll view so it never scrolls away */}
-        <View style={[styles.sheetHeader, { borderBottomColor: colors.border }]}>
-          <ReviewTabBar
-            tabs={TABS}
-            activeTab={activeTab}
-            onTabChange={(tab) => {
-              setActiveTab(tab);
-              // Leaving the photos tab — clear any photo focus so the route re-fits
-              if (tab !== 'photos') setFocusPhotoCoordinate(null);
-            }}
-          />
-        </View>
+        {/* Fixed tab bar — frosted glass, sits above the scroll view */}
+        <View style={{ flex: 1 }}>
+          <BlurView
+            intensity={Platform.OS === 'ios' ? 80 : 0}
+            tint={scheme === 'dark' ? 'dark' : 'light'}
+            style={[styles.sheetHeader, { borderBottomColor: colors.border }]}
+          >
+            {Platform.OS === 'android' && (
+              <View
+                style={[StyleSheet.absoluteFillObject, { backgroundColor: colors.backgroundCard + 'D8' }]}
+              />
+            )}
+            <ReviewTabBar
+              tabs={TABS}
+              activeTab={activeTab}
+              onTabChange={(tab) => {
+                setActiveTab(tab);
+                // Leaving the photos tab — clear any photo focus so the route re-fits
+                if (tab !== 'photos') setFocusPhotoCoordinate(null);
+              }}
+            />
+          </BlurView>
 
-        <BottomSheetScrollView
-          contentContainerStyle={[
-            styles.sheetContent,
-            { paddingBottom: 60 + insets.bottom + Spacing.lg },
-          ]}
-        >
+          <BottomSheetScrollView
+            style={{ backgroundColor: colors.backgroundCard }}
+            contentContainerStyle={[
+              styles.sheetContent,
+              { paddingBottom: 60 + insets.bottom + Spacing.lg },
+            ]}
+          >
           {/* Tab content */}
           {activeTab === 'walk' && (
             <TabWalkStats
@@ -348,7 +378,8 @@ export default function WalkSummaryScreen() {
               onPhotoOpen={(photo, index) => setSelectedPhotoIndex(index)}
             />
           )}
-        </BottomSheetScrollView>
+          </BottomSheetScrollView>
+        </View>
       </BottomSheet>
 
       {/* Fixed bottom action bar — outside the sheet so it stays pinned */}
@@ -365,7 +396,7 @@ export default function WalkSummaryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: 'transparent' },
   headerOverlay: {
     position: 'absolute',
     top: 0,
@@ -377,6 +408,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.base,
     paddingTop: Spacing.xs,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
   },
   sheetContent: {
     paddingHorizontal: Spacing.base,
