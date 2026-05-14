@@ -2,6 +2,7 @@ import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { IconSymbol, type IconSymbolName } from '@/components/ui/icon-symbol';
 
 type Size = 'xs' | 'sm' | 'md' | 'lg';
 
@@ -13,6 +14,7 @@ interface StatCardProps {
   accent?: boolean;
   align?: 'left' | 'center' | 'right';
   style?: ViewStyle;
+  icon?: IconSymbolName;
 }
 
 const valueSize: Record<Size, number> = {
@@ -37,6 +39,7 @@ export function StatCard({
   accent = false,
   align,
   style,
+  icon,
 }: StatCardProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
@@ -52,16 +55,21 @@ export function StatCard({
         style,
       ]}
     >
-      <Text
-        style={[
-          styles.label,
-          { color: colors.textMuted, fontSize: labelSize[size] },
-          align != null && { textAlign: align },
-        ]}
-        numberOfLines={1}
-      >
-        {label.toUpperCase()}
-      </Text>
+      <View style={styles.labelRow}>
+        {icon && (
+          <IconSymbol name={icon} size={13} color={colors.primary} />
+        )}
+        <Text
+          style={[
+            styles.label,
+            { color: colors.textMuted, fontSize: labelSize[size] },
+            align != null && { textAlign: align },
+          ]}
+          numberOfLines={1}
+        >
+          {label.toUpperCase()}
+        </Text>
+      </View>
       <View style={styles.valueRow}>
         <Text
           style={[
@@ -102,10 +110,15 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'flex-start',
   },
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: Spacing.xs,
+  },
   label: {
     fontFamily: Typography.fontMedium,
     letterSpacing: 0.8,
-    marginBottom: Spacing.xs,
   },
   valueRow: {
     flexDirection: 'row',

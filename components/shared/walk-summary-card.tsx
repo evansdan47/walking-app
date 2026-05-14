@@ -5,6 +5,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkStats } from '@/lib/db/walks';
 import { StatCard } from './stat-card';
 import { StatGrid } from './stat-grid';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 
 interface WalkSummaryCardProps {
   walk: {
@@ -74,22 +75,26 @@ export function WalkSummaryCard({ walk, onViewMap }: WalkSummaryCardProps) {
           value={formatDistance(stats.distanceMetres)}
           unit={formatDistanceUnit(stats.distanceMetres)}
           size="md"
+          icon={METRIC_ICONS.distance}
         />
         <StatCard
           label="Duration"
           value={formatDuration(stats.durationSeconds)}
           size="md"
+          icon={METRIC_ICONS.duration}
         />
         <StatCard
           label="Avg. Pace"
           value={formatPace(stats.avgPaceSecsPerKm)}
           unit="/km"
           size="md"
+          icon={METRIC_ICONS.pace}
         />
         <StatCard
           label="Moving Time"
           value={formatDuration(stats.movingTimeSeconds)}
           size="md"
+          icon={METRIC_ICONS.movingTime}
         />
         {stats.elevationGainMetres !== undefined ? (
           <StatCard
@@ -97,6 +102,7 @@ export function WalkSummaryCard({ walk, onViewMap }: WalkSummaryCardProps) {
             value={String(stats.elevationGainMetres)}
             unit="m"
             size="md"
+            icon={METRIC_ICONS.elevationGain}
           />
         ) : null}
         {stats.elevationLossMetres !== undefined ? (
@@ -105,6 +111,7 @@ export function WalkSummaryCard({ walk, onViewMap }: WalkSummaryCardProps) {
             value={String(stats.elevationLossMetres)}
             unit="m"
             size="md"
+            icon={METRIC_ICONS.elevationLoss}
           />
         ) : null}
       </StatGrid>

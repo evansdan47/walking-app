@@ -5,6 +5,8 @@ import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import type { Walk } from '@/lib/db/walks';
+import { IconSymbol } from '@/components/ui/icon-symbol';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 
 const PHOTO_THUMB_SIZE = 88;
 const ROUTE_THUMB_SIZE = 64;
@@ -29,9 +31,30 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
-function formatElevation(metres: number | undefined): string | null {
-  if (!metres || metres < 1) return null;
-  return `${Math.round(metres)} m`;
+// ── MetaChip ────────────────────────────────────────────────────────────────
+
+interface MetaChipProps {
+  icon: React.ComponentProps<typeof IconSymbol>['name'];
+  label: string;
+  colors: typeof Colors['light'];
+}
+
+function MetaChip({ icon, label, colors }: MetaChipProps) {
+  return (
+    <View style={styles.metaChip}>
+      <IconSymbol name={icon} size={12} color={colors.textMuted} />
+      <Text style={[styles.metaChipText, { color: colors.textMuted }]}>{label}</Text>
+    </View>
+  );
+}
+
+// ── Difficulty colour (traffic-light) ────────────────────────────────────────
+function difficultyColor(distanceMetres: number, elevationGainMetres = 0): string {
+  const distKm = distanceMetres / 1000;
+  const grade = elevationGainMetres / (distanceMetres || 1);
+  if (grade > 0.06 || distKm > 15 || elevationGainMetres > 500) return '#c0392b'; // hard
+  if (grade > 0.025 || distKm > 8 || elevationGainMetres > 150) return '#d97706'; // moderate
+  return '#16a34a'; // easy
 }
 
 function buildRoutePolyline(
@@ -80,10 +103,10 @@ export function SessionMemoryCard({
 
   const extraPhotos = totalPhotos - photos.length;
   const polylinePoints = buildRoutePolyline(routeCoordinates, ROUTE_THUMB_SIZE);
-
-  const elevation = walk.stats?.elevationGainMetres
-    ? formatElevation(walk.stats.elevationGainMetres)
-    : null;
+  const routeColor = difficultyColor(
+    walk.stats?.distanceMetres ?? 0,
+    walk.stats?.elevationGainMetres,
+  );
 
   return (
     <Pressable
@@ -123,15 +146,15 @@ export function SessionMemoryCard({
 
       {/* Bottom row: route thumb + info + chevron */}
       <View style={styles.infoRow}>
-        {/* Route SVG thumbnail */}
-        <View style={[styles.routeThumb, { backgroundColor: colors.backgroundMuted, borderColor: colors.border }]}>
+        {/* Route SVG thumbnail — transparent bg, difficulty-coloured line */}
+        <View style={styles.routeThumb}>
           {polylinePoints.length > 0 ? (
             <Svg width={ROUTE_THUMB_SIZE} height={ROUTE_THUMB_SIZE}>
               <Polyline
                 points={polylinePoints}
                 fill="none"
-                stroke={colors.secondary}
-                strokeWidth={1.8}
+                stroke={routeColor}
+                strokeWidth={2.2}
                 strokeLinejoin="round"
                 strokeLinecap="round"
               />
@@ -146,27 +169,22 @@ export function SessionMemoryCard({
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>
             {displayTitle}
           </Text>
-          <View style={styles.metaRow}>
-            {walk.stats && (
-              <>
-                <Text style={[styles.metaText, { color: colors.textMuted }]}>
-                  {formatDistance(walk.stats.distanceMetres)}
-                </Text>
-                <Text style={[styles.metaDot, { color: colors.border }]}> · </Text>
-                <Text style={[styles.metaText, { color: colors.textMuted }]}>
-                  {formatDuration(walk.stats.durationSeconds)}
-                </Text>
-                {elevation && (
-                  <>
-                    <Text style={[styles.metaDot, { color: colors.border }]}> · </Text>
-                    <Text style={[styles.metaText, { color: colors.textMuted }]}>
-                      {elevation}
-                    </Text>
-                  </>
-                )}
-              </>
-            )}
-          </View>
+          {walk.stats && (
+            <View style={styles.metaRow}>
+              <MetaChip icon={METRIC_ICONS.distance} label={formatDistance(walk.stats.distanceMetres)} colors={colors} />
+              <MetaChip icon={METRIC_ICONS.duration} label={formatDuration(walk.stats.durationSeconds)} colors={colors} />
+              {(walk.stats.elevationGainMetres ?? 0) >= 1 && (
+                <MetaChip icon={METRIC_ICONS.elevationGain} label={`${Math.round(walk.stats.elevationGainMetres!)} m`} colors={colors} />
+              )}
+              {(walk.stats.stepCount ?? walk.stats.hcStepCount ?? 0) > 0 && (
+                <MetaChip
+                  icon={METRIC_ICONS.steps}
+                  label={(walk.stats.hcStepCount ?? walk.stats.stepCount!).toLocaleString()}
+                  colors={colors}
+                />
+              )}
+            </View>
+          )}
         </View>
 
         {/* Chevron */}
@@ -182,6 +200,12 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
     marginBottom: Spacing.sm,
+    // subtle lift above the sheet background
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.07,
+    shadowRadius: 4,
+    elevation: 2,
   },
   photoStrip: {
     height: PHOTO_THUMB_SIZE,
@@ -218,7 +242,6 @@ const styles = StyleSheet.create({
     width: ROUTE_THUMB_SIZE,
     height: ROUTE_THUMB_SIZE,
     borderRadius: Radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
@@ -229,7 +252,7 @@ const styles = StyleSheet.create({
   },
   infoBody: {
     flex: 1,
-    gap: 2,
+    gap: 4,
   },
   title: {
     fontFamily: Typography.fontBold,
@@ -237,13 +260,16 @@ const styles = StyleSheet.create({
   },
   metaRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
+    gap: 6,
   },
-  metaText: {
-    fontFamily: Typography.fontRegular,
-    fontSize: Typography.sizes.sm,
+  metaChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
   },
-  metaDot: {
+  metaChipText: {
     fontFamily: Typography.fontRegular,
     fontSize: Typography.sizes.sm,
   },

@@ -1,4 +1,5 @@
 import { StatCard } from '@/components/shared/stat-card';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 
 interface PaceDisplayProps {
   paceSecsPerKm: number | undefined | null;
@@ -15,5 +16,5 @@ function formatPace(secsPerKm: number, unit: 'km' | 'mi'): string {
 export function PaceDisplay({ paceSecsPerKm, unit = 'km' }: PaceDisplayProps) {
   const value = paceSecsPerKm ? formatPace(paceSecsPerKm, unit) : '--:--';
   const unitLabel = `/${unit}`;
-  return <StatCard label="Pace" value={value} unit={unitLabel} size="md" align="center" />;
+  return <StatCard label="Pace" value={value} unit={unitLabel} size="md" align="center" icon={METRIC_ICONS.pace} />;
 }

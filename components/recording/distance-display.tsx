@@ -1,4 +1,5 @@
 import { StatCard } from '@/components/shared/stat-card';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 
 interface DistanceDisplayProps {
   distanceMetres: number;
@@ -19,5 +20,5 @@ export function DistanceDisplay({
   unit = 'km',
 }: DistanceDisplayProps) {
   const { value, unitLabel } = format(distanceMetres, unit);
-  return <StatCard label="Distance" value={value} unit={unitLabel} size="md" align="center" />;
+  return <StatCard label="Distance" value={value} unit={unitLabel} size="md" align="center" icon={METRIC_ICONS.distance} />;
 }

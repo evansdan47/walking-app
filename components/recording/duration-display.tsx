@@ -1,4 +1,5 @@
 import { StatCard } from '@/components/shared/stat-card';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 
 interface DurationDisplayProps {
   durationSeconds: number;
@@ -24,6 +25,7 @@ export function DurationDisplay({
       value={formatDuration(durationSeconds)}
       size={size}
       align="center"
+      icon={METRIC_ICONS.duration}
     />
   );
 }

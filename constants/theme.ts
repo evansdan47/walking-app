@@ -26,28 +26,28 @@ export const Palette = {
     container: '#a0f399',
     100: '#d4fbd0',   // secondary muted light
   },
-  // Surface – Glacial Blue
+  // Surface – warm natural whites
   surface: {
-    base:    '#f3faff',
-    low:     '#e6f6ff',
+    base:    '#f7f6f3',   // warm near-white page background
+    low:     '#ffffff',   // pure white for cards
     lowest:  '#ffffff',
-    highest: '#cfe6f2',
-    dim:     '#c7dde9',
+    highest: '#eeecea',   // warm subtle inner areas
+    dim:     '#e3e0da',   // borders / dividers
   },
   // Dark / icon base
   ink: {
-    900: '#071e27',   // on-surface – deepest text
+    900: '#1c1917',   // warm charcoal — on-surface deepest text
     800: '#0d1f14',   // dark bg
     700: '#122518',   // icon bg / dark card
     600: '#1a3322',   // dark muted
   },
   outline: {
-    variant: '#e3bfb2',
+    variant: '#dedbd5',   // warm subtle border
   },
   // Muted icon / secondary text
   slate: {
-    600: '#4a7080',
-    400: '#8eb5c1',
+    600: '#78716c',   // warm stone gray
+    400: '#a8a29e',   // lighter warm gray for dark mode
   },
   white: '#FFFFFF',
   black: '#000000',

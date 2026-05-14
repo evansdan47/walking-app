@@ -231,7 +231,7 @@ export default function WalkSummaryScreen() {
       <View style={styles.headerOverlay} pointerEvents="box-none">
         <AppHeader
           title={displayTitle}
-          onBack={editingTitle ? handleCancelTitle : () => router.back()}
+          onBack={editingTitle ? handleCancelTitle : undefined}
           centerContent={
             editingTitle ? (
               <TextInput
@@ -357,6 +357,7 @@ export default function WalkSummaryScreen() {
         onExportGpx={() => {}}
         onSaveRoute={() => setSaveRouteModalVisible(true)}
         onDelete={handleDelete}
+        onClose={() => router.back()}
         showSaveRoute={showSaveRoute}
       />
     </View>

@@ -6,7 +6,7 @@ import { ComponentProps } from 'react';
 import { OpaqueColorValue, type StyleProp, type TextStyle } from 'react-native';
 
 type IconMapping = Record<SymbolViewProps['name'], ComponentProps<typeof MaterialIcons>['name']>;
-type IconSymbolName = keyof typeof MAPPING;
+export type IconSymbolName = keyof typeof MAPPING;
 
 /**
  * Add your SF Symbols to Material Icons mappings here.
@@ -34,6 +34,16 @@ const MAPPING = {
   'photo.on.rectangle': 'photo-library',
   'map.fill': 'map',
   'location.fill': 'location-on',
+  'scope': 'my-location',
+  // ── Metric / stat icons ────────────────────────────────────────────────
+  'arrow.left.and.right': 'straighten',           // distance
+  'clock': 'timer',                               // duration / elapsed time
+  'clock.fill': 'timer',                          // moving time (filled variant)
+  'arrow.up.forward': 'trending-up',             // elevation gain
+  'arrow.down.forward': 'trending-down',         // elevation loss
+  'mountain.2': 'terrain',                       // altitude
+  'gauge': 'speed',                              // speed / pace
+  'flame.fill': 'local-fire-department',         // calories
   'checkmark.circle.fill': 'check-circle',
   'xmark.circle.fill': 'cancel',
   'xmark': 'close',
@@ -41,7 +51,7 @@ const MAPPING = {
   'gear': 'settings',
   'person.fill': 'person',
   'bookmark.fill': 'bookmark',
-} as IconMapping;
+} as unknown as IconMapping;
 
 /**
  * An icon component that uses native SF Symbols on iOS, and Material Icons on Android and web.

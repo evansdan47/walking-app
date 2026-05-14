@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { type ViewStyle } from 'react-native';
 
 import { StatCard } from '@/components/shared/stat-card';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 
 interface ElapsedTimerProps {
   startedAt: number;
@@ -47,5 +48,5 @@ export function ElapsedTimer({
     return undefined;
   }, [running, startedAt, pausedDurationMs]);
 
-  return <StatCard label="Elapsed" value={display} size={size} accent align={align ?? 'center'} style={style} />;
+  return <StatCard label="Elapsed" value={display} size={size} accent align={align ?? 'center'} style={style} icon={METRIC_ICONS.duration} />;
 }

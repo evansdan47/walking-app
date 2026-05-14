@@ -43,11 +43,13 @@ import { SavePointButton } from '@/components/recording/save-point-button';
 import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
 import { HistoryWalkCard } from '@/components/review/history-walk-card';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
+import { SessionsSheetContent } from '@/components/sessions/sessions-sheet-content';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { RouteColourPicker } from '@/components/ui/route-colour-picker';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { METRIC_ICONS } from '@/constants/metric-icons';
 import { useReviewRoute } from '@/contexts/review-route-context';
 import { useWalkSessionContext } from '@/contexts/walk-session-context';
 import { api } from '@/convex/_generated/api';
@@ -256,6 +258,7 @@ function buildStatPanels({
           {...(stepSource != null && { unit: stepSource === 'hc' ? 'HC' : 'D' })}
           size="md"
           align="center"
+          icon={METRIC_ICONS.steps}
         />
       ),
     },
@@ -268,6 +271,7 @@ function buildStatPanels({
           {...(elevationGainMetres > 0 && { unit: 'm' })}
           size="md"
           align="center"
+          icon={METRIC_ICONS.elevationGain}
         />
       ),
     },
@@ -280,6 +284,7 @@ function buildStatPanels({
           {...(elevationLossMetres > 0 && { unit: 'm' })}
           size="md"
           align="center"
+          icon={METRIC_ICONS.elevationLoss}
         />
       ),
     },
@@ -296,6 +301,7 @@ function buildStatPanels({
           {...(speedKmh != null && { unit: 'km/h' })}
           size="md"
           align="center"
+          icon={METRIC_ICONS.speed}
         />
       ),
     },
@@ -308,6 +314,7 @@ function buildStatPanels({
           {...(caloriesKcal != null && { unit: 'kcal' })}
           size="md"
           align="center"
+          icon={METRIC_ICONS.calories}
         />
       ),
       onPress: () => {
@@ -1423,6 +1430,7 @@ export default function MapScreen() {
   const snapPoints = useMemo(() => {
     const adj = (n: number) => `${n + navAdjPct}%`;
     if (activeSheet === 'profile') return [adj(92)];
+    if (activeSheet === 'sessions') return [adj(92)];
     if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(50), adj(70), adj(92)];
     return [adj(62)]; // record idle at same height as active index 3 — no jump on recording start
   }, [activeSheet, isActive, navAdjPct]);
@@ -1491,9 +1499,18 @@ export default function MapScreen() {
       return;
     }
 
-    // Sessions tab — navigate to the dedicated sessions screen
+    // Sessions tab — open as bottom sheet overlay
     if (tab === 'sessions') {
-      router.push('/(tabs)/sessions');
+      if (activeSheet === 'sessions') {
+        if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
+        pendingFinalSnapRef.current = null;
+        ignoreNextCloseRef.current = true;
+        setActiveSheet(null);
+        sheetRef.current?.close();
+      } else {
+        setActiveSheet('sessions');
+        scheduleSnap(0);
+      }
       return;
     }
 
@@ -1711,7 +1728,7 @@ export default function MapScreen() {
         index={-1}
         enableDynamicSizing={false}
         enablePanDownToClose
-        backgroundStyle={{ backgroundColor: colors.backgroundCard }}
+        backgroundStyle={{ backgroundColor: colors.background }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
           setSheetSnapIndex(index);
@@ -1741,6 +1758,9 @@ export default function MapScreen() {
           }
         }}
       >
+        {activeSheet === 'sessions' && (
+          <SessionsSheetContent isOpen={activeSheet === 'sessions'} />
+        )}
         {activeSheet === 'record' && (
           <RecordSheetContent
             colors={colors}
@@ -1812,7 +1832,7 @@ export default function MapScreen() {
             activeOpacity={0.8}
           >
             <IconSymbol
-              name="location.fill"
+              name="scope"
               size={20}
               color={followLocation ? '#fff' : colors.textMuted}
             />

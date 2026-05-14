@@ -12,6 +12,7 @@ interface ReviewActionBarProps {
   onExportGpx: () => void;
   onSaveRoute?: () => void;
   onDelete: () => void;
+  onClose: () => void;
   showSaveRoute: boolean;
 }
 
@@ -20,6 +21,7 @@ export function ReviewActionBar({
   onExportGpx,
   onSaveRoute,
   onDelete,
+  onClose,
   showSaveRoute,
 }: ReviewActionBarProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
@@ -48,14 +50,14 @@ export function ReviewActionBar({
         },
       ]}
     >
-      {/* Share */}
+      {/* Delete */}
       <TouchableOpacity
         style={styles.button}
-        onPress={() => handleComingSoon('Share')}
+        onPress={handleDelete}
         activeOpacity={0.7}
       >
-        <Ionicons name="share-outline" size={22} color={colors.textMuted} />
-        <Text style={[styles.label, { color: colors.textMuted }]}>Share</Text>
+        <Ionicons name="trash-outline" size={22} color={DELETE_COLOR} />
+        <Text style={[styles.label, { color: DELETE_COLOR }]}>Delete</Text>
       </TouchableOpacity>
 
       {/* Export GPX */}
@@ -68,26 +70,36 @@ export function ReviewActionBar({
         <Text style={[styles.label, { color: colors.textMuted }]}>Export GPX</Text>
       </TouchableOpacity>
 
-      {/* Save Route — only for free walks */}
+      {/* Share */}
+      <TouchableOpacity
+        style={styles.button}
+        onPress={() => handleComingSoon('Share')}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="share-outline" size={22} color={colors.textMuted} />
+        <Text style={[styles.label, { color: colors.textMuted }]}>Share</Text>
+      </TouchableOpacity>
+
+      {/* Make Route — only for free walks */}
       {showSaveRoute && (
         <TouchableOpacity
           style={styles.button}
-          onPress={onSaveRoute}
+          onPress={() => handleComingSoon('Make Route')}
           activeOpacity={0.7}
         >
           <Ionicons name="bookmark-outline" size={22} color={colors.textMuted} />
-          <Text style={[styles.label, { color: colors.textMuted }]}>Save Route</Text>
+          <Text style={[styles.label, { color: colors.textMuted }]}>Make Route</Text>
         </TouchableOpacity>
       )}
 
-      {/* Delete */}
+      {/* Close */}
       <TouchableOpacity
         style={styles.button}
-        onPress={handleDelete}
+        onPress={onClose}
         activeOpacity={0.7}
       >
-        <Ionicons name="trash-outline" size={22} color={DELETE_COLOR} />
-        <Text style={[styles.label, { color: DELETE_COLOR }]}>Delete</Text>
+        <Ionicons name="close-outline" size={22} color={colors.textMuted} />
+        <Text style={[styles.label, { color: colors.textMuted }]}>Close</Text>
       </TouchableOpacity>
     </View>
   );
