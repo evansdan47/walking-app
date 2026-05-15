@@ -2,31 +2,31 @@ import { useAuth, useUser } from '@clerk/expo';
 import { Ionicons } from '@expo/vector-icons';
 import BottomSheet, { BottomSheetFlatList, BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useConvex, useMutation } from 'convex/react';
-import Constants from 'expo-constants';
 import { BlurView } from 'expo-blur';
+import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  Animated,
-  AppState,
-  BackHandler,
-  Dimensions,
-  LayoutAnimation,
-  Linking,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  UIManager,
-  useWindowDimensions,
-  View
+    ActivityIndicator,
+    Alert,
+    Animated,
+    AppState,
+    BackHandler,
+    Dimensions,
+    LayoutAnimation,
+    Linking,
+    Platform,
+    Pressable,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    UIManager,
+    useWindowDimensions,
+    View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -44,6 +44,8 @@ import { SavePointButton } from '@/components/recording/save-point-button';
 import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
 import { HistoryWalkCard } from '@/components/review/history-walk-card';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
+import { ExploreMapLayer, type ExploreViewBounds, type PlannedRoute } from '@/components/explore/explore-map-layer';
+import { ExploreSheetContent } from '@/components/explore/explore-sheet-content';
 import { SessionsSheetContent } from '@/components/sessions/sessions-sheet-content';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
@@ -62,12 +64,12 @@ import { useStepCounter } from '@/hooks/use-step-counter';
 import { DEFAULT_STAT_PANEL_ORDER, useUserPreferences } from '@/hooks/use-user-preferences';
 import { getPhotosForWalk, type WalkPhoto } from '@/lib/db/walk-photos';
 import {
-  checkHealthConnectPermissions,
-  isHealthConnectAvailable,
-  isHealthConnectUpdateRequired,
-  openHealthConnectAppSettings,
-  openHealthConnectMainSettings,
-  requestHealthConnectPermissions,
+    checkHealthConnectPermissions,
+    isHealthConnectAvailable,
+    isHealthConnectUpdateRequired,
+    openHealthConnectAppSettings,
+    openHealthConnectMainSettings,
+    requestHealthConnectPermissions,
 } from '@/lib/health-connect';
 import { sheetEvents } from '@/lib/ui/sheet-events';
 import Slider from '@react-native-community/slider';
@@ -1375,6 +1377,19 @@ export default function MapScreen() {
 
   // Sheet state
   const [activeSheet, setActiveSheet] = useState<SheetTab | null>(null);
+  // Ref so the location-watcher closure (which only re-runs when perms change)
+  // can always read the latest value without going stale.
+  const activeSheetRef = useRef<SheetTab | null>(null);
+  activeSheetRef.current = activeSheet;
+
+  // ── Explore tab state ────────────────────────────────────────────────────
+  const [exploreViewBounds, setExploreViewBounds] = useState<ExploreViewBounds | null>(null);
+  const [exploreZoom, setExploreZoom] = useState(12);
+  const [exploreSelectedRoute, setExploreSelectedRoute] = useState<PlannedRoute | null>(null);
+  // Debounce timer: bounds (and therefore Convex queries) only update after
+  // the camera has been still for 700 ms.  Zoom updates immediately because
+  // it drives JS-only clustering (no server request).
+  const exploreBoundsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<BottomSheet>(null);
 
   // Tracks which sheet was open before navigating to a walk review so we can
@@ -1435,8 +1450,10 @@ export default function MapScreen() {
         if (loc.coords.accuracy != null) setLiveAccuracy(loc.coords.accuracy);
         if (loc.coords.altitude != null) setLiveAltitude(loc.coords.altitude);
 
-        // Move camera if follow mode is active and no review is open.
-        if (followLocationRef.current && !isReviewActive) {
+        // Move camera if follow mode is active, no review is open,
+        // and the user is not browsing the explore tab (they may have
+        // panned to a different area deliberately).
+        if (followLocationRef.current && !isReviewActive && activeSheetRef.current !== 'explore') {
           cameraRef.current?.setCamera({
             centerCoordinate: [loc.coords.longitude, loc.coords.latitude],
             zoomLevel: 15,
@@ -1482,6 +1499,11 @@ export default function MapScreen() {
     const adj = (n: number) => `${n + navAdjPct}%`;
     if (activeSheet === 'profile') return [adj(92)];
     if (activeSheet === 'sessions') return [adj(92)];
+    if (activeSheet === 'explore') {
+      // 17 points every 3% (45 → 93) — close enough together to feel like
+      // free-form resizing rather than snapping between two fixed positions.
+      return Array.from({ length: 17 }, (_, i) => adj(45 + i * 3));
+    }
     if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(50), adj(70), adj(92)];
     return [adj(62)]; // record idle at same height as active index 3 — no jump on recording start
   }, [activeSheet, isActive, navAdjPct]);
@@ -1538,9 +1560,27 @@ export default function MapScreen() {
   }, [isActive]);
 
   const handleTabPress = (tab: SheetTab) => {
-    // Explore tab — overlay not yet designed; placeholder for now.
     if (tab === 'explore') {
-      Alert.alert('Coming Soon', 'The Explore overlay is not yet available.');
+      if (activeSheet === 'explore') {
+        if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
+        pendingFinalSnapRef.current = null;
+        ignoreNextCloseRef.current = true;
+        setActiveSheet(null);
+        sheetRef.current?.close();
+      } else {
+        setActiveSheet('explore');
+        setExploreSelectedRoute(null);
+        // Seed initial bounds from current location so Convex query fires immediately
+        if (currentLocation) {
+          setExploreViewBounds({
+            minLat: currentLocation.latitude - 0.05,
+            maxLat: currentLocation.latitude + 0.05,
+            minLng: currentLocation.longitude - 0.05,
+            maxLng: currentLocation.longitude + 0.05,
+          });
+        }
+        scheduleSnap(0);
+      }
       return;
     }
 
@@ -1624,8 +1664,35 @@ export default function MapScreen() {
   // Re-centre camera on current location whenever the sheet snap changes,
   // offsetting the map centre upward by half the sheet height so the position
   // dot sits in the middle of the visible map strip above the sheet.
+  //
+  // Exception — explore mode: never snap back to the user's GPS position.
+  //   • Route selected → re-fit its bounds with the updated sheet padding so
+  //     the route stays centred in the visible area above the sheet.
+  //   • No route selected → do nothing (preserve the user's browsed viewport).
   useEffect(() => {
     if (!currentLocation || isReviewActive) return;
+
+    if (activeSheetRef.current === 'explore') {
+      if (exploreSelectedRoute) {
+        const allPts = exploreSelectedRoute.legs.flatMap((l) => l.points);
+        if (allPts.length > 0) {
+          const lats = allPts.map((p) => p.lat);
+          const lngs = allPts.map((p) => p.lng);
+          const sheetHeightPct = sheetSnapIndex >= 0 && snapPoints[sheetSnapIndex]
+            ? parseFloat(String(snapPoints[sheetSnapIndex])) / 100
+            : 0;
+          const sheetPx = windowHeight * sheetHeightPct;
+          cameraRef.current?.fitBounds(
+            [Math.max(...lngs), Math.max(...lats)],
+            [Math.min(...lngs), Math.min(...lats)],
+            [insets.top + 80, 40, sheetPx + 20, 40],
+            300,
+          );
+        }
+      }
+      return;
+    }
+
     const sheetHeightPct = sheetSnapIndex >= 0 && snapPoints[sheetSnapIndex]
       ? parseFloat(String(snapPoints[sheetSnapIndex])) / 100
       : 0;
@@ -1701,6 +1768,40 @@ export default function MapScreen() {
         attributionEnabled={false}
         compassEnabled={false}
         onTouchStart={() => setFollowLocation(false)}
+        onRegionDidChange={(event: any) => {
+          // Only update explore bounds while the explore sheet is open.
+          if (activeSheetRef.current !== 'explore') return;
+          const props = event?.properties;
+          if (!props?.visibleBounds || props?.zoomLevel === undefined) return;
+          const [[neLng, neLat], [swLng, swLat]] = props.visibleBounds as [[number, number], [number, number]];
+          // Zoom drives JS clustering — only update when it crosses a cluster
+          // threshold (9 / 10 / 11 / 12) so that Mapbox floating-point drift
+          // (e.g. 12.0001 → 11.9999) never triggers a re-render, which would
+          // cause the native bridge to fire onRegionDidChange again in a loop.
+          const newZoom = props.zoomLevel as number;
+          setExploreZoom(prev => {
+            const bucket = (z: number) => z < 9 ? 0 : z < 10 ? 1 : z < 11 ? 2 : z < 12 ? 3 : 4;
+            return bucket(newZoom) !== bucket(prev) ? newZoom : prev;
+          });
+          // Bounds drive Convex queries — debounce AND guard against micro-drift
+          // so we only re-subscribe when the viewport meaningfully changed.
+          if (exploreBoundsDebounceRef.current) clearTimeout(exploreBoundsDebounceRef.current);
+          exploreBoundsDebounceRef.current = setTimeout(() => {
+            exploreBoundsDebounceRef.current = null;
+            setExploreViewBounds(prev => {
+              if (
+                prev &&
+                Math.abs(prev.minLat - swLat) < 0.0001 &&
+                Math.abs(prev.maxLat - neLat) < 0.0001 &&
+                Math.abs(prev.minLng - swLng) < 0.0001 &&
+                Math.abs(prev.maxLng - neLng) < 0.0001
+              ) {
+                return prev;
+              }
+              return { minLat: swLat, maxLat: neLat, minLng: swLng, maxLng: neLng };
+            });
+          }, 700);
+        }}
       >
         {/* Camera: managed imperatively via cameraRef when follow mode is on.
             defaultSettings is only applied on mount (not reactive), so updates
@@ -1723,6 +1824,37 @@ export default function MapScreen() {
           coordinates={isReviewActive ? [] : coordinates}
           showUserLocation={perms.foreground === 'granted'}
         />
+        {/* Explore route pins + selected route line */}
+        {activeSheet === 'explore' && (
+          <ExploreMapLayer
+            viewBounds={exploreViewBounds}
+            zoom={exploreZoom}
+            selectedRoute={exploreSelectedRoute}
+            onSelectRoute={(route) => {
+              setExploreSelectedRoute(route);
+              const allPts = route.legs.flatMap((l) => l.points);
+              if (allPts.length > 0) {
+                const lats = allPts.map((p) => p.lat);
+                const lngs = allPts.map((p) => p.lng);
+                const sheetPx = windowHeight * 0.45;
+                cameraRef.current?.fitBounds(
+                  [Math.max(...lngs), Math.max(...lats)],
+                  [Math.min(...lngs), Math.min(...lats)],
+                  [insets.top + 80, 40, sheetPx + 20, 40],
+                  600,
+                );
+              }
+            }}
+            onClusterZoom={(lat, lng, newZoom) => {
+              cameraRef.current?.setCamera({
+                centerCoordinate: [lng, lat],
+                zoomLevel: newZoom,
+                animationDuration: 400,
+              });
+            }}
+          />
+        )}
+
         {/* Review route — shown while walk-summary transparentModal is open on top */}
         {isReviewActive && (
           <ReviewRouteLayer
@@ -1860,6 +1992,42 @@ export default function MapScreen() {
             reset={reset}
           />
         )}
+        {activeSheet === 'explore' && (
+          <ExploreSheetContent
+            viewBounds={exploreViewBounds}
+            selectedRoute={exploreSelectedRoute}
+            onSelectRoute={(route) => {
+              setExploreSelectedRoute(route);
+              const allPts = route.legs.flatMap((l) => l.points);
+              if (allPts.length > 0) {
+                const lats = allPts.map((p) => p.lat);
+                const lngs = allPts.map((p) => p.lng);
+                const sheetPx = windowHeight * 0.45;
+                cameraRef.current?.fitBounds(
+                  [Math.max(...lngs), Math.max(...lats)],
+                  [Math.min(...lngs), Math.min(...lats)],
+                  [insets.top + 80, 40, sheetPx + 20, 40],
+                  600,
+                );
+              }
+            }}
+            onClearRoute={() => setExploreSelectedRoute(null)}
+            onStartWalk={(route) => {
+              Alert.alert(
+                'Start Walk',
+                `Follow "${route.title}"?\n\nRoute following will be available in a future update.`,
+                [{ text: 'OK' }],
+              );
+            }}
+            onEditRoute={(route) => {
+              Alert.alert(
+                'Edit Route',
+                'Route editing is available on the web app at ramble.io.',
+                [{ text: 'OK' }],
+              );
+            }}
+          />
+        )}
         {activeSheet === 'profile' && (
           <ProfileSheetContent
             colors={colors}
@@ -1876,7 +2044,7 @@ export default function MapScreen() {
 
       {/* Map button strip — top-right, rendered after BottomSheet so zIndex
           places these above the sheet and touches always reach the buttons. */}
-      {!isReviewActive && perms.foreground === 'granted' && (activeSheet === null || activeSheet === 'record') && (
+      {!isReviewActive && perms.foreground === 'granted' && (activeSheet === null || activeSheet === 'record' || activeSheet === 'explore') && (
         <View style={[styles.mapButtonStrip, { top: insets.top + Spacing.sm }]}>
           {/* Follow-location toggle — always snaps to current position on press */}
           <TouchableOpacity

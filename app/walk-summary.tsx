@@ -24,8 +24,8 @@ import { getPhotosForWalk } from '@/lib/db/walk-photos';
 import { deleteWalk, getWalk, updateWalkTitle } from '@/lib/db/walks';
 import { buildRoute } from '@/lib/review/build-route';
 import {
-  ROUTE_DISPLAY_MODES,
-  type RouteDisplayMode,
+    ROUTE_DISPLAY_MODES,
+    type RouteDisplayMode,
 } from '@/lib/review/route-display-modes';
 
 const TABS: TabDef[] = [
@@ -79,9 +79,22 @@ export default function WalkSummaryScreen() {
   );
   useEffect(() => {
     if (route.length === 0) return;
+    // Prime overlay options BEFORE setting review data so ReviewRouteLayer
+    // renders with the correct camera padding from its very first render
+    // (avoids a visible double-fit when the sheet is already open on load).
+    setReviewOverlayOptions({
+      cameraPaddingBottom: screenHeight * 0.75 + 20,
+      cameraPaddingTop: insets.top + 60,
+      showPhotoMarkers: false,
+      focusCoordinate: null,
+      mode: displayMode,
+      colours,
+    });
     setReviewData(route, photos, onPhotoTap);
     return () => { clearReviewData(); };
-    // intentionally omit setReviewData / clearReviewData (stable callbacks)
+    // intentionally omit setReviewData / clearReviewData / setReviewOverlayOptions (stable callbacks)
+    // screenHeight, insets.top, displayMode, colours are stable at mount; the second
+    // effect below keeps them in sync for any subsequent changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, photos, onPhotoTap]);
 
@@ -153,7 +166,7 @@ export default function WalkSummaryScreen() {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={styles.container} pointerEvents="box-none">
       {/* Photo viewer carousel — renders over everything */}
       {selectedPhotoIndex !== null && (
         <PhotoViewerCarousel

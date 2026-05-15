@@ -1,10 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
 import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
 import { useConvex } from 'convex/react';
+import { BlurView } from 'expo-blur';
 import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { BlurView } from 'expo-blur';
 import {
     ActivityIndicator,
     Platform,

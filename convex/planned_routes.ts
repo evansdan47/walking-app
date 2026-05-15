@@ -208,6 +208,70 @@ export const listWithinBoundsWithAuthors = query({
 });
 
 /**
+ * Return up to `limit` planned routes whose centroid is nearest to the given
+ * centre coordinate, applying the same visibility rules as listWithinBounds.
+ *
+ * Used by the Explore sheet to show fallback results when the current viewport
+ * contains fewer than 5 routes.
+ */
+export const listNearest = query({
+  args: {
+    centerLat: v.number(),
+    centerLng: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, { centerLat, centerLng, limit }) => {
+    const identity = await ctx.auth.getUserIdentity();
+    let currentUserId: string | null = null;
+    if (identity) {
+      const user = await ctx.db
+        .query('users')
+        .withIndex('by_tokenIdentifier', (q) =>
+          q.eq('tokenIdentifier', identity.tokenIdentifier),
+        )
+        .unique();
+      currentUserId = user?._id ?? null;
+    }
+
+    const all = await ctx.db.query('plannedRoutes').collect();
+
+    // Apply the same visibility gate as listWithinBounds
+    const visible = all.filter((route) => {
+      const vis = route.visibility ?? 'public';
+      const isOwner = currentUserId !== null && route.userId === currentUserId;
+      return vis === 'public' || isOwner;
+    });
+
+    // Compute the distance from each route's bounding-box centre to the map centre
+    const R = 6371;
+    const withDist = visible.map((route) => {
+      const allPts = route.legs.flatMap((l) => l.points);
+      if (allPts.length === 0) return { route, distKm: Infinity };
+      let minLat = allPts[0]!.lat, maxLat = allPts[0]!.lat;
+      let minLng = allPts[0]!.lng, maxLng = allPts[0]!.lng;
+      for (const pt of allPts) {
+        if (pt.lat < minLat) minLat = pt.lat;
+        if (pt.lat > maxLat) maxLat = pt.lat;
+        if (pt.lng < minLng) minLng = pt.lng;
+        if (pt.lng > maxLng) maxLng = pt.lng;
+      }
+      const rLat = (minLat + maxLat) / 2;
+      const rLng = (minLng + maxLng) / 2;
+      const φ1 = (centerLat * Math.PI) / 180;
+      const φ2 = (rLat * Math.PI) / 180;
+      const dφ = ((rLat - centerLat) * Math.PI) / 180;
+      const dλ = ((rLng - centerLng) * Math.PI) / 180;
+      const a = Math.sin(dφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
+      const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return { route, distKm };
+    });
+
+    withDist.sort((a, b) => a.distKm - b.distKm);
+    return withDist.slice(0, limit).map((x) => x.route);
+  },
+});
+
+/**
  * Update an existing planned route. Only the route owner or an admin user may
  * call this. The authorId and userId fields are preserved unchanged.
  */

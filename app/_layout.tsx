@@ -17,8 +17,9 @@ import { Stack } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { LogBox } from 'react-native';
+import { SplashOverlay } from '@/components/ui/splash-overlay';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // @clerk/expo uses NativeEventEmitter with a native module that doesn't implement the
@@ -63,6 +64,7 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
+  const [showSplash, setShowSplash] = useState(true);
 
   const [fontsLoaded] = useFonts({
     Inter_400Regular,
@@ -75,9 +77,12 @@ export default function RootLayout() {
 
   useEffect(() => {
     if (fontsLoaded) {
+      // Hide native splash and hand off to our custom overlay
       void SplashScreen.hideAsync();
     }
   }, [fontsLoaded]);
+
+  const handleSplashDone = useCallback(() => setShowSplash(false), []);
 
   if (!fontsLoaded) {
     return null;
@@ -112,6 +117,7 @@ export default function RootLayout() {
           </WalkSessionProvider>
         </ConvexProviderWithAuth>
       </ClerkProvider>
+      {showSplash && <SplashOverlay onDone={handleSplashDone} />}
     </GestureHandlerRootView>
   );
 }
