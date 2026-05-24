@@ -3,8 +3,8 @@ import { Image, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'r
 
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import type { Walk } from '@/lib/db/walks';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
+import type { Walk } from '@/lib/db/walks';
 import { buildPhotoTimeline } from '@/lib/review/build-photo-timeline';
 import type { RoutePoint } from '@/lib/review/build-route';
 
@@ -75,11 +75,17 @@ export function TabPhotos({ photos, route, walk, unit, onPhotoOpen }: TabPhotosP
             onPress={() => onPhotoOpen(entry.photo, index)}
             android_ripple={{ color: 'rgba(0,0,0,0.2)' }}
           >
-            <Image
-              source={{ uri: entry.photo.localUri }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-            />
+            {entry.photo.photoStatus === 'upload_skipped' && !entry.photo.localAssetUri ? (
+              <View style={[StyleSheet.absoluteFill, styles.photoPlaceholder]}>
+                <Ionicons name="image-outline" size={24} color="#666" />
+              </View>
+            ) : (
+              <Image
+                source={{ uri: entry.photo.localAssetUri ?? entry.photo.localUri }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+              />
+            )}
             {/* Timestamp chip — bottom left */}
             <View style={styles.timestampChip}>
               <Text style={styles.timestampText}>{entry.formattedTime}</Text>
@@ -132,6 +138,11 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     borderRadius: Radius.sm,
     backgroundColor: '#1a1a1a',
+  },
+  photoPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#2a2a2a',
   },
   timestampChip: {
     position: 'absolute',

@@ -6,12 +6,13 @@ import { randomUUID } from 'expo-crypto';
 import { useRouter } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
 import {
-    ActivityIndicator,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -21,10 +22,11 @@ import { SessionMemoryCard } from '@/components/sessions/session-memory-card';
 import { WeeklySummaryCard } from '@/components/sessions/weekly-summary-card';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { ensurePendingSyncJob } from '@/lib/db/sync-jobs';
+import { ensurePendingSyncJob, getSyncStatusMap, type WalkSyncStatus } from '@/lib/db/sync-jobs';
 import { getRouteCoordinatesForWalk } from '@/lib/db/track-points';
 import { getFirstPhotosForWalks, getPhotoCountsForWalks, type WalkPhoto } from '@/lib/db/walk-photos';
 import { getWeeklyStats, listCompletedWalks, type Walk, type WeekBucket } from '@/lib/db/walks';
+import { downloadWalksFromCloud } from '@/lib/sync/download-walks';
 import { processPendingJobs } from '@/lib/sync/sync-manager';
 
 // ---------------------------------------------------------------------------
@@ -99,6 +101,7 @@ interface WalkEnrichment {
   photos: WalkPhoto[];
   totalPhotos: number;
   routeCoordinates: [number, number][];
+  syncStatus: WalkSyncStatus | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +130,7 @@ export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetConten
   const [selectedWeekStart, setSelectedWeekStart] = useState<number>(() => startOfWeek(Date.now()));
   const [enrichment, setEnrichment] = useState<Map<string, WalkEnrichment>>(new Map());
   const [syncing, setSyncing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
   // Reload data every time the sheet opens
   useEffect(() => {
@@ -141,6 +145,7 @@ export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetConten
     const ids = completed.map((w) => w.id);
     const photoCounts = getPhotoCountsForWalks(ids);
     const firstPhotos = getFirstPhotosForWalks(ids, 5);
+    const syncStatuses = getSyncStatusMap(ids);
 
     const map = new Map<string, WalkEnrichment>();
     for (const walk of completed) {
@@ -148,6 +153,7 @@ export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetConten
         photos: firstPhotos.get(walk.id) ?? [],
         totalPhotos: photoCounts.get(walk.id) ?? 0,
         routeCoordinates: getRouteCoordinatesForWalk(walk.id, 80),
+        syncStatus: syncStatuses.get(walk.id) ?? null,
       });
     }
     setEnrichment(map);
@@ -184,6 +190,45 @@ export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetConten
     }
   };
 
+  const handleDownload = async () => {
+    setDownloading(true);
+    try {
+      const result = await downloadWalksFromCloud(convex);
+      // Refresh the list so newly downloaded walks appear immediately.
+      const completed = listCompletedWalks();
+      setWalks(completed);
+      const ids = completed.map((w) => w.id);
+      const photoCounts = getPhotoCountsForWalks(ids);
+      const firstPhotos = getFirstPhotosForWalks(ids, 5);
+      const syncStatuses = getSyncStatusMap(ids);
+      const map = new Map<string, WalkEnrichment>();
+      for (const walk of completed) {
+        map.set(walk.id, {
+          photos: firstPhotos.get(walk.id) ?? [],
+          totalPhotos: photoCounts.get(walk.id) ?? 0,
+          routeCoordinates: getRouteCoordinatesForWalk(walk.id, 80),
+          syncStatus: syncStatuses.get(walk.id) ?? null,
+        });
+      }
+      setEnrichment(map);
+
+      if (result.downloaded > 0) {
+        Alert.alert(
+          'Download complete',
+          `Downloaded ${result.downloaded} walk${result.downloaded !== 1 ? 's' : ''} from the cloud.${result.failed > 0 ? `\n${result.failed} failed — check Diagnostics for details.` : ''}`,
+        );
+      } else if (result.failed > 0) {
+        Alert.alert('Download failed', 'Could not download walks. Check Diagnostics for details.');
+      } else {
+        Alert.alert('Up to date', `All ${result.skipped} cloud walk${result.skipped !== 1 ? 's' : ''} are already on this device.`);
+      }
+    } catch (err) {
+      Alert.alert('Download failed', 'Could not reach the server. Check your connection and try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const handleWalkPress = (walkId: string) => {
     if (onOpenWalk) {
       onOpenWalk(walkId);
@@ -217,6 +262,20 @@ export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetConten
             </Text>
           </View>
           <View style={styles.headerActions}>
+            <Pressable
+              style={[styles.headerActionBtn, { borderColor: colors.border }]}
+              onPress={() => void handleDownload()}
+              disabled={downloading || syncing}
+            >
+              {downloading ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <>
+                  <Ionicons name="cloud-download-outline" size={18} color={colors.primary} />
+                  <Text style={[styles.headerActionLabel, { color: colors.primary }]}>Download</Text>
+                </>
+              )}
+            </Pressable>
             {unsynced.length > 0 && (
               <Pressable
                 style={[styles.headerActionBtn, { borderColor: colors.border }]}
@@ -277,6 +336,7 @@ export function SessionsSheetContent({ isOpen, onOpenWalk }: SessionsSheetConten
                       photos={e?.photos ?? []}
                       totalPhotos={e?.totalPhotos ?? 0}
                       routeCoordinates={e?.routeCoordinates ?? []}
+                      syncStatus={e?.syncStatus ?? null}
                       onPress={() => handleWalkPress(walk.id)}
                     />
                   </View>

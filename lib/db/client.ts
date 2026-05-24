@@ -99,6 +99,91 @@ try {
   `);
 } catch {}
 
+// ─── Roadmap Phase 1: schema migrations ───────────────────────────────────────
+
+// walks: privacy controls (visibility defaults private so nothing is accidentally
+// shared), start/end trim for home-location protection, and versioned derived
+// fields so algorithms can be rerun against historical walks.
+try { db.execSync(`ALTER TABLE walks ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'`); } catch {}
+try { db.execSync(`ALTER TABLE walks ADD COLUMN trim_start_m INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { db.execSync(`ALTER TABLE walks ADD COLUMN trim_end_m INTEGER NOT NULL DEFAULT 0`); } catch {}
+try { db.execSync(`ALTER TABLE walks ADD COLUMN stats_version INTEGER`); } catch {}
+try { db.execSync(`ALTER TABLE walks ADD COLUMN display_polyline_json TEXT`); } catch {}
+try { db.execSync(`ALTER TABLE walks ADD COLUMN display_polyline_version INTEGER`); } catch {}
+
+// walk_photos: OS asset URI (replaces local_uri), explicit upload status, and
+// pre-computed nearest track point for fast review timeline positioning.
+try { db.execSync(`ALTER TABLE walk_photos ADD COLUMN local_asset_uri TEXT`); } catch {}
+try { db.execSync(`ALTER TABLE walk_photos ADD COLUMN photo_status TEXT NOT NULL DEFAULT 'local_only'`); } catch {}
+  // CHECK values: 'local_only' | 'upload_pending' | 'uploaded' | 'upload_failed' | 'upload_skipped'
+try { db.execSync(`ALTER TABLE walk_photos ADD COLUMN nearest_track_point_id TEXT`); } catch {}
+
+// sync_jobs: separate core walk sync status from photo upload status so photo
+// failures never block a walk from being shown as synced.
+try { db.execSync(`ALTER TABLE sync_jobs ADD COLUMN core_sync_status TEXT NOT NULL DEFAULT 'pending'`); } catch {}
+  // CHECK values: 'pending' | 'in_progress' | 'synced' | 'failed'
+try { db.execSync(`ALTER TABLE sync_jobs ADD COLUMN photo_sync_status TEXT NOT NULL DEFAULT 'none'`); } catch {}
+  // CHECK values: 'none' | 'pending' | 'partial' | 'synced' | 'failed'
+try { db.execSync(`ALTER TABLE sync_jobs ADD COLUMN phase INTEGER NOT NULL DEFAULT 1`); } catch {}
+  // 1 = create walk, 2 = upload points, 3 = upload photos, 4 = complete
+
+// explore_routes: local cache of public planned routes, keyed by 2°×2° region
+// cell so stale regions can be invalidated independently.
+try {
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS explore_routes (
+      id                TEXT PRIMARY KEY NOT NULL,
+      region_key        TEXT NOT NULL,
+      title             TEXT NOT NULL,
+      description       TEXT,
+      author_id         TEXT NOT NULL,
+      visibility        TEXT NOT NULL,
+      distance_km       REAL,
+      elevation_gain_m  REAL,
+      centroid_lat      REAL NOT NULL,
+      centroid_lng      REAL NOT NULL,
+      legs_json         TEXT NOT NULL,
+      created_at        INTEGER NOT NULL,
+      cached_at         INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_explore_routes_region   ON explore_routes(region_key);
+    CREATE INDEX IF NOT EXISTS idx_explore_routes_centroid ON explore_routes(centroid_lat, centroid_lng);
+  `);
+} catch {}
+
+// explore_region_cache: tracks per-region sync state so the sync engine can
+// skip Convex calls for recently-checked regions (TTL ~1 hour).
+// All three data columns are nullable — NULL means the region has never been
+// checked or fetched.
+try {
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS explore_region_cache (
+      region_key      TEXT PRIMARY KEY NOT NULL,
+      route_count     INTEGER NOT NULL DEFAULT 0,
+      content_hash    TEXT,
+      last_checked_at INTEGER,
+      last_synced_at  INTEGER
+    );
+  `);
+} catch {}
+
+// app_logs: structured diagnostic log — written by the app's logger utility.
+// Rows are automatically pruned to the most recent 500 entries.
+try {
+  db.execSync(`
+    CREATE TABLE IF NOT EXISTS app_logs (
+      id      INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts      INTEGER NOT NULL,
+      level   TEXT    NOT NULL,
+      tag     TEXT    NOT NULL,
+      message TEXT    NOT NULL,
+      stack   TEXT,
+      context TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_app_logs_ts ON app_logs(ts DESC);
+  `);
+} catch {}
+
 export function getKv(key: string): string | null {
   const row = db.getFirstSync<{ value: string }>(`SELECT value FROM kv_store WHERE key = ?`, key);
   return row?.value ?? null;

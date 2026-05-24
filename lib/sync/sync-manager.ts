@@ -2,6 +2,7 @@ import type { ConvexReactClient } from 'convex/react';
 import * as Network from 'expo-network';
 
 import { getPendingJobs, updateJobStatus } from '../db/sync-jobs';
+import { appLog } from '../diagnostics/logger';
 import { MAX_SYNC_RETRIES } from './sync-config';
 import { uploadWalk } from './upload-walk';
 
@@ -32,12 +33,14 @@ export async function processPendingJobs(convex: ConvexReactClient): Promise<voi
           uploadedPointCount: job.uploadedPointCount,
         });
         updateJobStatus(job.id, 'completed');
+        appLog('info', 'sync', 'Walk sync completed', undefined, { walkId: job.walkId, jobId: job.id });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         if (job.attemptCount + 1 >= MAX_SYNC_RETRIES) {
-          // Exhausted retries — mark permanently failed so it stops being queued.
+          appLog('error', 'sync', `Walk sync exhausted ${MAX_SYNC_RETRIES} retries — marked failed`, err, { walkId: job.walkId, jobId: job.id });
           updateJobStatus(job.id, 'failed', `[exhausted] ${message}`);
         } else {
+          appLog('warn', 'sync', `Walk sync attempt failed (attempt ${job.attemptCount + 1})`, err, { walkId: job.walkId, jobId: job.id });
           updateJobStatus(job.id, 'failed', message);
         }
       }

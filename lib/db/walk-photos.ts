@@ -1,5 +1,12 @@
 import { db } from './client';
 
+export type PhotoStatus =
+  | 'local_only'
+  | 'upload_pending'
+  | 'uploaded'
+  | 'upload_failed'
+  | 'upload_skipped';
+
 export interface WalkPhoto {
   id: string;
   walkId: string;
@@ -8,6 +15,9 @@ export interface WalkPhoto {
   longitude: number;
   heading: number | null;
   localUri: string;
+  localAssetUri: string | null;
+  photoStatus: PhotoStatus;
+  nearestTrackPointId: string | null;
   caption: string | null;
   convexId: string | null;
   storageId: string | null;
@@ -21,6 +31,9 @@ type WalkPhotoRow = {
   longitude: number;
   heading: number | null;
   local_uri: string;
+  local_asset_uri: string | null;
+  photo_status: string | null;
+  nearest_track_point_id: string | null;
   caption: string | null;
   convex_id: string | null;
   storage_id: string | null;
@@ -35,27 +48,46 @@ function rowToPhoto(row: WalkPhotoRow): WalkPhoto {
     longitude: row.longitude,
     heading: row.heading,
     localUri: row.local_uri,
+    localAssetUri: row.local_asset_uri ?? null,
+    photoStatus: (row.photo_status as PhotoStatus | null) ?? 'local_only',
+    nearestTrackPointId: row.nearest_track_point_id ?? null,
     caption: row.caption,
     convexId: row.convex_id,
     storageId: row.storage_id,
   };
 }
 
-export function insertPhoto(
-  photo: Omit<WalkPhoto, 'convexId' | 'storageId'>,
-): void {
+export type InsertPhotoInput = {
+  id: string;
+  walkId: string;
+  timestamp: number;
+  latitude: number;
+  longitude: number;
+  heading: number | null;
+  localAssetUri: string;
+  caption: string | null;
+};
+
+export function insertPhoto(photo: InsertPhotoInput): void {
   db.runSync(
-    `INSERT INTO walk_photos (id, walk_id, timestamp, latitude, longitude, heading, local_uri, caption, convex_id, storage_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    `INSERT INTO walk_photos
+       (id, walk_id, timestamp, latitude, longitude, heading,
+        local_uri, local_asset_uri, photo_status, caption, convex_id, storage_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'local_only', ?, NULL, NULL)`,
     photo.id,
     photo.walkId,
     photo.timestamp,
     photo.latitude,
     photo.longitude,
     photo.heading ?? null,
-    photo.localUri,
+    photo.localAssetUri,
+    photo.localAssetUri,
     photo.caption ?? null,
   );
+}
+
+export function updatePhotoStatus(id: string, status: PhotoStatus): void {
+  db.runSync(`UPDATE walk_photos SET photo_status = ? WHERE id = ?`, status, id);
 }
 
 export function getPhotosForWalk(walkId: string): WalkPhoto[] {
@@ -104,7 +136,7 @@ export function updatePhotoAfterSync(
   storageId: string,
 ): void {
   db.runSync(
-    `UPDATE walk_photos SET convex_id = ?, storage_id = ? WHERE id = ?`,
+    `UPDATE walk_photos SET convex_id = ?, storage_id = ?, photo_status = 'uploaded' WHERE id = ?`,
     convexId,
     storageId,
     id,

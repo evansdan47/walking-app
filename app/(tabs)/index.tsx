@@ -7,30 +7,35 @@ import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Animated,
-    AppState,
-    BackHandler,
-    Dimensions,
-    LayoutAnimation,
-    Linking,
-    Platform,
-    Pressable,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    UIManager,
-    useWindowDimensions,
-    View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  AppState,
+  BackHandler,
+  Dimensions,
+  LayoutAnimation,
+  Linking,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  UIManager,
+  useWindowDimensions,
+  View
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DebugStatsPanel } from '@/components/debug/debug-stats-panel';
+import { ExploreMapLayer, type ExploreViewBounds, type PlannedRoute } from '@/components/explore/explore-map-layer';
+import { ExploreSheetContent } from '@/components/explore/explore-sheet-content';
+import { FollowRouteLayer } from '@/components/follow/follow-route-layer';
 import { LivePositionLayer } from '@/components/map/live-position-layer';
+import { QueuedRouteLayer } from '@/components/map/queued-route-layer';
 import { AltitudeDisplay } from '@/components/recording/altitude-display';
 import { DistanceDisplay } from '@/components/recording/distance-display';
 import { DraggableStatGrid, type StatPanel } from '@/components/recording/draggable-stat-grid';
@@ -40,39 +45,41 @@ import { PaceDisplay } from '@/components/recording/pace-display';
 import { PhotoFab } from '@/components/recording/photo-button';
 import { RecordingControls } from '@/components/recording/recording-controls';
 import { RecordingStatusBadge } from '@/components/recording/recording-status-badge';
+import { RouteProximityBadge } from '@/components/recording/route-proximity-badge';
 import { SavePointButton } from '@/components/recording/save-point-button';
 import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
 import { HistoryWalkCard } from '@/components/review/history-walk-card';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
-import { ExploreMapLayer, type ExploreViewBounds, type PlannedRoute } from '@/components/explore/explore-map-layer';
-import { ExploreSheetContent } from '@/components/explore/explore-sheet-content';
 import { SessionsSheetContent } from '@/components/sessions/sessions-sheet-content';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
+import { DevSlider } from '@/components/ui/dev-slider';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { RouteColourPicker } from '@/components/ui/route-colour-picker';
 import { METRIC_ICONS } from '@/constants/metric-icons';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { useQueuedWalk } from '@/contexts/queued-walk-context';
 import { useReviewRoute } from '@/contexts/review-route-context';
 import { useWalkSessionContext } from '@/contexts/walk-session-context';
 import { api } from '@/convex/_generated/api';
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { useFeatureFlags } from '@/hooks/use-feature-flags';
+import { useFeatureFlags, type FeatureFlags, type HapticImpactLevel } from '@/hooks/use-feature-flags';
 import { useLocationPermission } from '@/hooks/use-location-permission';
+import { fireTestPulse } from '@/hooks/use-off-route-haptic';
 import { useRouteColours } from '@/hooks/use-route-colours';
 import { useStepCounter } from '@/hooks/use-step-counter';
 import { DEFAULT_STAT_PANEL_ORDER, useUserPreferences } from '@/hooks/use-user-preferences';
+import { findNearbyRoutes } from '@/lib/db/nearby-routes';
 import { getPhotosForWalk, type WalkPhoto } from '@/lib/db/walk-photos';
 import {
-    checkHealthConnectPermissions,
-    isHealthConnectAvailable,
-    isHealthConnectUpdateRequired,
-    openHealthConnectAppSettings,
-    openHealthConnectMainSettings,
-    requestHealthConnectPermissions,
+  checkHealthConnectPermissions,
+  isHealthConnectAvailable,
+  isHealthConnectUpdateRequired,
+  openHealthConnectAppSettings,
+  openHealthConnectMainSettings,
+  requestHealthConnectPermissions,
 } from '@/lib/health-connect';
 import { sheetEvents } from '@/lib/ui/sheet-events';
-import Slider from '@react-native-community/slider';
 import MapboxGL from '@rnmapbox/maps';
 import { useCameraPermissions } from 'expo-camera';
 import { Pedometer } from 'expo-sensors';
@@ -81,6 +88,7 @@ import { useLiveWalkSync } from '@/hooks/use-live-walk-sync';
 import { ensurePendingSyncJob } from '@/lib/db/sync-jobs';
 import { getPointsForWalk } from '@/lib/db/track-points';
 import { listCompletedWalks, type Walk } from '@/lib/db/walks';
+import { isWithinStartThreshold } from '@/lib/explore/proximity';
 import { haversineMetres } from '@/lib/location/haversine';
 import { processPendingJobs } from '@/lib/sync/sync-manager';
 import { randomUUID } from 'expo-crypto';
@@ -193,7 +201,7 @@ function useLiveStats(walkId: string | null) {
 // Types
 // ---------------------------------------------------------------------------
 
-type SheetTab = 'plan' | 'record' | 'explore' | 'sessions' | 'profile';
+type SheetTab = 'plan' | 'record' | 'explore' | 'sessions' | 'profile' | 'queued-walk';
 
 // ---------------------------------------------------------------------------
 // Sheet content components
@@ -400,18 +408,9 @@ function RecordSheetContent({
     }
   }, [state.phase, reset]);
 
-  // Completing → brief spinner
+  // Completing → full-screen overlay on the map handles the visual; sheet renders nothing.
   if (state.phase === 'completing') {
-    return (
-      <BottomSheetScrollView
-        contentContainerStyle={[sheetStyles.content, { paddingBottom: Spacing.base, alignItems: 'center' as const }]}
-      >
-        <ActivityIndicator color={colors.primary} style={{ marginTop: Spacing.xl }} />
-        <Text style={[sheetStyles.debugText, { color: colors.textMuted, marginTop: Spacing.sm }]}>
-          Saving your walk…
-        </Text>
-      </BottomSheetScrollView>
-    );
+    return null;
   }
 
   // Compute live stats
@@ -435,7 +434,7 @@ function RecordSheetContent({
       {/* Frosted glass header — elapsed timer + controls */}
       <BlurView
         intensity={Platform.OS === 'ios' ? 80 : 0}
-        tint={colors.background === '#1c1917' ? 'dark' : 'light'}
+        tint={colors.background === '#0d1f14' ? 'dark' : 'light'}
         style={[sheetStyles.recordFixedHeader, { borderBottomColor: colors.border }]}
       >
         {Platform.OS === 'android' && (
@@ -978,6 +977,29 @@ function ProfileSheetContent({
   onGpsAccuracyMultiplierChange,
   forcePedometerSteps,
   onToggleForcePedometerSteps,
+  startProximityThresholdM,
+  onStartProximityThresholdMChange,
+  hapticOffRouteEnabled,
+  onToggleHapticOffRouteEnabled,
+  hapticOffRouteStartM,
+  onHapticOffRouteStartMChange,
+  hapticOffRouteMaxM,
+  onHapticOffRouteMaxMChange,
+  hapticMinImpact,
+  onHapticMinImpactChange,
+  hapticMaxImpact,
+  onHapticMaxImpactChange,
+  hapticSlowIntervalMs,
+  onHapticSlowIntervalMsChange,
+  hapticFastIntervalMs,
+  onHapticFastIntervalMsChange,
+  hapticTestEnabled,
+  onToggleHapticTestEnabled,
+  hapticTestDistanceM,
+  onHapticTestDistanceMChange,
+  exploreDirectDetail,
+  onToggleExploreDirectDetail,
+  flags,
 }: {
   colors: ColorPalette;
   insets: ReturnType<typeof useSafeAreaInsets>;
@@ -987,6 +1009,29 @@ function ProfileSheetContent({
   onGpsAccuracyMultiplierChange: (value: number) => void;
   forcePedometerSteps: boolean;
   onToggleForcePedometerSteps: (value: boolean) => void;
+  startProximityThresholdM: number;
+  onStartProximityThresholdMChange: (value: number) => void;
+  hapticOffRouteEnabled: boolean;
+  onToggleHapticOffRouteEnabled: (value: boolean) => void;
+  hapticOffRouteStartM: number;
+  onHapticOffRouteStartMChange: (value: number) => void;
+  hapticOffRouteMaxM: number;
+  onHapticOffRouteMaxMChange: (value: number) => void;
+  hapticMinImpact: HapticImpactLevel;
+  onHapticMinImpactChange: (value: HapticImpactLevel) => void;
+  hapticMaxImpact: HapticImpactLevel;
+  onHapticMaxImpactChange: (value: HapticImpactLevel) => void;
+  hapticSlowIntervalMs: number;
+  onHapticSlowIntervalMsChange: (value: number) => void;
+  hapticFastIntervalMs: number;
+  onHapticFastIntervalMsChange: (value: number) => void;
+  hapticTestEnabled: boolean;
+  onToggleHapticTestEnabled: (value: boolean) => void;
+  hapticTestDistanceM: number;
+  onHapticTestDistanceMChange: (value: number) => void;
+  exploreDirectDetail: boolean;
+  onToggleExploreDirectDetail: (value: boolean) => void;
+  flags: FeatureFlags;
 }) {
   const { signOut } = useAuth();
   const { user } = useUser();
@@ -1026,7 +1071,7 @@ function ProfileSheetContent({
       {/* ── Frosted glass header: avatar + name + email + sign out ── */}
       <BlurView
         intensity={Platform.OS === 'ios' ? 80 : 0}
-        tint={colors.background === '#1c1917' ? 'dark' : 'light'}
+        tint={colors.background === '#0d1f14' ? 'dark' : 'light'}
         style={[
           sheetStyles.profileFrostedHeader,
           { borderBottomColor: colors.border },
@@ -1123,6 +1168,11 @@ function ProfileSheetContent({
 
       {/* ── Developer Settings ── */}
       <SheetAccordion title="Developer Settings" icon="code-slash-outline" colors={colors}>
+        {/* Stats & State — first option */}
+        <SheetAccordion title="Stats & State" icon="pulse-outline" colors={colors}>
+          <DebugStatsPanel flags={flags} colors={colors} />
+        </SheetAccordion>
+
         <View style={sheetStyles.flagRow}>
           <View style={sheetStyles.flagLabel}>
             <Text style={[sheetStyles.flagName, { color: colors.text }]}>History during recording</Text>
@@ -1155,21 +1205,295 @@ function ProfileSheetContent({
               {gpsAccuracyMultiplier.toFixed(1)}×
             </Text>
           </View>
-          <Slider
-            style={{ width: '100%', height: 40 }}
+          <DevSlider
             minimumValue={1}
             maximumValue={4}
             step={0.1}
             value={gpsAccuracyMultiplier}
-            onValueChange={(v) => onGpsAccuracyMultiplierChange(Math.round(v * 10) / 10)}
-            minimumTrackTintColor={colors.primary}
-            maximumTrackTintColor={colors.border}
-            thumbTintColor={colors.primary}
+            onValueChange={(v) => onGpsAccuracyMultiplierChange(v)}
+            trackFillColor={colors.primary}
+            trackEmptyColor={colors.border}
+            accentColor={colors.primary}
+            labelColor={colors.text}
           />
           <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
             <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>1.0× (strict)</Text>
             <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>4.0× (loose)</Text>
           </View>
+        </View>
+
+        {/* Start walk proximity threshold */}
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Start walk threshold</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Distance within which "Start Walk" is shown instead of "Walk When Near"</Text>
+            </View>
+            <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 48, textAlign: 'right' }]}>
+              {startProximityThresholdM} m
+            </Text>
+          </View>
+          <DevSlider
+            minimumValue={10}
+            maximumValue={500}
+            step={10}
+            value={startProximityThresholdM}
+            onValueChange={(v) => onStartProximityThresholdMChange(v)}
+            trackFillColor={colors.primary}
+            trackEmptyColor={colors.border}
+            accentColor={colors.primary}
+            labelColor={colors.text}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>10 m (tight)</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>500 m (loose)</Text>
+          </View>
+        </View>
+
+        {/* Explore — direct detail mode */}
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Explore direct detail</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Single tap shows route info panel immediately (skips highlight step)</Text>
+          </View>
+          <Switch
+            value={exploreDirectDetail}
+            onValueChange={onToggleExploreDirectDetail}
+            trackColor={{ false: colors.border, true: colors.primary }}
+          />
+        </View>
+
+        {/* Off-route haptic feedback — master toggle */}
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Off-route haptic feedback</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Pulse the device when straying from a planned route</Text>
+          </View>
+          <Switch
+            value={hapticOffRouteEnabled}
+            onValueChange={onToggleHapticOffRouteEnabled}
+            trackColor={{ false: colors.border, true: colors.primary }}
+          />
+        </View>
+
+        {/* Off-route haptic — start distance */}
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Haptic start distance</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Distance from path at which haptic pulsing begins</Text>
+            </View>
+            <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 48, textAlign: 'right' }]}>
+              {hapticOffRouteStartM} m
+            </Text>
+          </View>
+          <DevSlider
+            minimumValue={5}
+            maximumValue={100}
+            step={5}
+            value={hapticOffRouteStartM}
+            onValueChange={(v) => onHapticOffRouteStartMChange(v)}
+            trackFillColor={colors.primary}
+            trackEmptyColor={colors.border}
+            accentColor={colors.primary}
+            labelColor={colors.text}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>5 m</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>100 m</Text>
+          </View>
+        </View>
+
+        {/* Off-route haptic — min impact */}
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Min impact</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Impact style at the start-distance threshold</Text>
+          </View>
+          <View style={[profileStyles.segmentControl, { borderColor: colors.border }]}>
+            {(['light', 'medium', 'heavy'] as HapticImpactLevel[]).map((level) => (
+              <Pressable
+                key={level}
+                style={[profileStyles.segment, hapticMinImpact === level && { backgroundColor: colors.primary }]}
+                onPress={() => onHapticMinImpactChange(level)}
+              >
+                <Text style={[{ color: hapticMinImpact === level ? '#fff' : colors.textMuted, fontFamily: Typography.fontMedium, fontSize: Typography.sizes.xs }]}>
+                  {level[0]!.toUpperCase() + level.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* Off-route haptic — max impact */}
+        <View style={sheetStyles.flagRow}>
+          <View style={sheetStyles.flagLabel}>
+            <Text style={[sheetStyles.flagName, { color: colors.text }]}>Max impact</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Impact style at the max-urgency threshold</Text>
+          </View>
+          <View style={[profileStyles.segmentControl, { borderColor: colors.border }]}>
+            {(['light', 'medium', 'heavy'] as HapticImpactLevel[]).map((level) => (
+              <Pressable
+                key={level}
+                style={[profileStyles.segment, hapticMaxImpact === level && { backgroundColor: colors.primary }]}
+                onPress={() => onHapticMaxImpactChange(level)}
+              >
+                <Text style={[{ color: hapticMaxImpact === level ? '#fff' : colors.textMuted, fontFamily: Typography.fontMedium, fontSize: Typography.sizes.xs }]}>
+                  {level[0]!.toUpperCase() + level.slice(1)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        {/* Off-route haptic — max urgency distance */}
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Haptic max-urgency distance</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Distance at which haptic reaches fastest pulse and heaviest impact</Text>
+            </View>
+            <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 48, textAlign: 'right' }]}>
+              {hapticOffRouteMaxM} m
+            </Text>
+          </View>
+          <DevSlider
+            minimumValue={20}
+            maximumValue={200}
+            step={5}
+            value={hapticOffRouteMaxM}
+            onValueChange={(v) => onHapticOffRouteMaxMChange(v)}
+            trackFillColor={colors.primary}
+            trackEmptyColor={colors.border}
+            accentColor={colors.primary}
+            labelColor={colors.text}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>20 m</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>200 m</Text>
+          </View>
+        </View>
+
+        {/* Off-route haptic — slow interval */}
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Slow interval</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Pulse every N ms when barely off route (at start distance)</Text>
+            </View>
+            <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 56, textAlign: 'right' }]}>
+              {hapticSlowIntervalMs} ms
+            </Text>
+          </View>
+          <DevSlider
+            minimumValue={500}
+            maximumValue={5000}
+            step={100}
+            value={hapticSlowIntervalMs}
+            onValueChange={(v) => onHapticSlowIntervalMsChange(v)}
+            trackFillColor={colors.primary}
+            trackEmptyColor={colors.border}
+            accentColor={colors.primary}
+            labelColor={colors.text}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>500 ms</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>5000 ms</Text>
+          </View>
+        </View>
+
+        {/* Off-route haptic — fast interval */}
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Fast interval</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Pulse every N ms at max urgency (at max-urgency distance)</Text>
+            </View>
+            <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 56, textAlign: 'right' }]}>
+              {hapticFastIntervalMs} ms
+            </Text>
+          </View>
+          <DevSlider
+            minimumValue={100}
+            maximumValue={1500}
+            step={50}
+            value={hapticFastIntervalMs}
+            onValueChange={(v) => onHapticFastIntervalMsChange(v)}
+            trackFillColor={colors.primary}
+            trackEmptyColor={colors.border}
+            accentColor={colors.primary}
+            labelColor={colors.text}
+          />
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>100 ms</Text>
+            <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>1500 ms</Text>
+          </View>
+        </View>
+
+        {/* Haptic test panel */}
+        <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.sm, backgroundColor: colors.backgroundMuted, borderRadius: Radius.sm, padding: Spacing.sm }]}>
+          <Text style={[sheetStyles.flagName, { color: colors.text }]}>Haptic test panel</Text>
+
+          {/* Test mode master switch */}
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagDesc, { color: colors.text }]}>Test mode</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Use mock distance on the follow screen instead of GPS</Text>
+            </View>
+            <Switch
+              value={hapticTestEnabled}
+              onValueChange={onToggleHapticTestEnabled}
+              trackColor={{ false: colors.border, true: colors.primary }}
+            />
+          </View>
+
+          {/* Mock distance slider — only visible when test mode is on */}
+          {hapticTestEnabled && (
+            <View style={{ gap: Spacing.xs }}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text style={[sheetStyles.flagDesc, { color: colors.text }]}>Mock distance</Text>
+                <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 48, textAlign: 'right' }]}>
+                  {hapticTestDistanceM} m
+                </Text>
+              </View>
+              <DevSlider
+                minimumValue={0}
+                maximumValue={200}
+                step={1}
+                value={hapticTestDistanceM}
+                onValueChange={(v) => onHapticTestDistanceMChange(v)}
+                trackFillColor={colors.primary}
+                trackEmptyColor={colors.border}
+                accentColor={colors.primary}
+                labelColor={colors.text}
+              />
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>0 m</Text>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>200 m</Text>
+              </View>
+            </View>
+          )}
+
+          {/* One-shot test pulse button */}
+          <Pressable
+            onPress={() => fireTestPulse({
+              distanceM: hapticTestDistanceM,
+              startM: flags.hapticOffRouteStartM,
+              maxM: flags.hapticOffRouteMaxM,
+              minImpact: hapticMinImpact,
+              maxImpact: hapticMaxImpact,
+              slowIntervalMs: hapticSlowIntervalMs,
+              fastIntervalMs: hapticFastIntervalMs,
+            })}
+            style={({ pressed }) => [{
+              backgroundColor: pressed ? colors.primary + 'cc' : colors.primary,
+              borderRadius: Radius.sm,
+              paddingVertical: Spacing.xs,
+              alignItems: 'center',
+            }]}
+          >
+            <Text style={[sheetStyles.flagName, { color: '#fff' }]}>▶ Fire test pulse</Text>
+          </Pressable>
         </View>
 
         {/* Route Colours — nested inside Dev Settings */}
@@ -1200,6 +1524,7 @@ function RecordTabButton({
   active,
   isRecording,
   isPaused,
+  isWalkQueued,
   colors,
   onPress,
   onLongPress,
@@ -1207,14 +1532,16 @@ function RecordTabButton({
   active: boolean;
   isRecording: boolean;
   isPaused: boolean;
+  isWalkQueued: boolean;
   colors: ColorPalette;
   onPress: () => void;
   onLongPress: () => void;
 }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
+  // Start pulsing when recording, paused, or walk is queued.
   useEffect(() => {
-    if (isRecording && !isPaused) {
+    if ((isRecording && !isPaused) || isWalkQueued) {
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 0.25, duration: 700, useNativeDriver: true }),
@@ -1227,12 +1554,30 @@ function RecordTabButton({
       pulseAnim.setValue(1);
     }
     return undefined;
-  }, [isRecording, isPaused, pulseAnim]);
+  }, [isRecording, isPaused, isWalkQueued, pulseAnim]);
 
-  const active_ = active || isRecording || isPaused;
-  const bgColor = (isRecording || isPaused) ? '#b91c1c' : active_ ? colors.primary + '18' : 'transparent';
-  const labelColor = (isRecording || isPaused) ? '#fff' : active_ ? colors.primary : colors.tabIconDefault;
-  const label = isPaused ? 'Paused' : isRecording ? 'Recording' : 'Record';
+  const active_ = active || isRecording || isPaused || isWalkQueued;
+  const bgColor = (isRecording || isPaused)
+    ? '#b91c1c'
+    : isWalkQueued
+    ? '#16a34a18'
+    : active_
+    ? colors.primary + '18'
+    : 'transparent';
+  const labelColor = (isRecording || isPaused)
+    ? '#fff'
+    : isWalkQueued
+    ? '#16a34a'
+    : active_
+    ? colors.primary
+    : colors.tabIconDefault;
+  const label = isPaused
+    ? 'Paused'
+    : isRecording
+    ? 'Recording'
+    : isWalkQueued
+    ? 'Walk Ready'
+    : 'Record';
 
   return (
     <TouchableOpacity
@@ -1248,6 +1593,8 @@ function RecordTabButton({
             tabBarStyles.recordDot,
             (isRecording || isPaused)
               ? { backgroundColor: '#fff', opacity: pulseAnim }
+              : isWalkQueued
+              ? { backgroundColor: '#16a34a', opacity: pulseAnim }
               : { backgroundColor: '#b91c1c' },
           ]}
         />
@@ -1267,6 +1614,7 @@ function TabBar({
   insets,
   isRecording,
   isPaused,
+  isWalkQueued,
 }: {
   active: SheetTab | null;
   onPress: (tab: SheetTab) => void;
@@ -1275,6 +1623,7 @@ function TabBar({
   insets: ReturnType<typeof useSafeAreaInsets>;
   isRecording: boolean;
   isPaused: boolean;
+  isWalkQueued: boolean;
 }) {
   const sideTabs: { id: SheetTab; icon: string; label: string }[] = [
     { id: 'explore',  icon: 'safari',        label: 'Explore' },
@@ -1325,6 +1674,7 @@ function TabBar({
           active={active === 'record'}
           isRecording={isRecording}
           isPaused={isPaused}
+          isWalkQueued={isWalkQueued}
           colors={colors}
           onPress={() => onPress('record')}
           onLongPress={onRecordLongPress}
@@ -1357,6 +1707,9 @@ export default function MapScreen() {
   useLiveWalkSync();
   const { isReviewActive, reviewRoute, reviewPhotos, onPhotoTap, reviewOverlayOptions } = useReviewRoute();
   const { flags, setFlag } = useFeatureFlags();
+  const { queuedWalk, setQueuedWalk, clearQueuedWalk } = useQueuedWalk();
+  // Prevents the auto-start from firing multiple times for the same GPS update burst.
+  const autoStartFiredRef = useRef(false);
 
   const activeWalkId =
     state.phase === 'recording' || state.phase === 'paused' ? state.walkId : null;
@@ -1368,6 +1721,17 @@ export default function MapScreen() {
     useState<{ latitude: number; longitude: number } | null>(null);
   const [liveAccuracy, setLiveAccuracy] = useState<number | null>(null);
   const [liveAltitude, setLiveAltitude] = useState<number | null>(null);
+
+  // Planned route currently being followed (set when a walk starts from a queued route).
+  const [followingRoute, setFollowingRoute] = useState<PlannedRoute | null>(null);
+  const [followWalkedIdx, setFollowWalkedIdx] = useState(0);
+  const [isOffRoute, setIsOffRoute] = useState(false);
+  const [distToRouteM, setDistToRouteM] = useState<number | null>(null);
+  // Haptic pulse engine — config is written by render, read by a stable interval.
+  const hapticConfigRef = useRef<{ distM: number | null; startM: number; maxM: number; active: boolean }>({
+    distM: null, startM: 20, maxM: 75, active: false,
+  });
+  const lastHapticTimeRef = useRef(0);
 
   // Follow-location toggle: when on, the camera re-centres on every position update.
   const [followLocation, setFollowLocation] = useState(true);
@@ -1385,7 +1749,17 @@ export default function MapScreen() {
   // ── Explore tab state ────────────────────────────────────────────────────
   const [exploreViewBounds, setExploreViewBounds] = useState<ExploreViewBounds | null>(null);
   const [exploreZoom, setExploreZoom] = useState(12);
-  const [exploreSelectedRoute, setExploreSelectedRoute] = useState<PlannedRoute | null>(null);
+  /** Route highlighted in the list and on the map (first tap). */
+  const [exploreHighlightedRoute, setExploreHighlightedRoute] = useState<PlannedRoute | null>(null);
+  /** Route whose detail panel is shown (second tap). */
+  const [exploreDetailRoute, setExploreDetailRoute] = useState<PlannedRoute | null>(null);
+  /** Routes in a tapped proximity group (≤ 50 m apart). */
+  const [exploreGroupedRoutes, setExploreGroupedRoutes] = useState<PlannedRoute[] | null>(null);
+  /**
+   * Resolved routes from ExploreSheetContent — shared with ExploreMapLayer so
+   * both components use a single Convex subscription instead of two.
+   */
+  const [exploreRoutes, setExploreRoutes] = useState<PlannedRoute[]>([]);
   // Debounce timer: bounds (and therefore Convex queries) only update after
   // the camera has been still for 700 ms.  Zoom updates immediately because
   // it drives JS-only clustering (no server request).
@@ -1453,7 +1827,7 @@ export default function MapScreen() {
         // Move camera if follow mode is active, no review is open,
         // and the user is not browsing the explore tab (they may have
         // panned to a different area deliberately).
-        if (followLocationRef.current && !isReviewActive && activeSheetRef.current !== 'explore') {
+        if (followLocationRef.current && !isReviewActive && activeSheetRef.current !== 'explore' && activeSheetRef.current !== 'queued-walk') {
           cameraRef.current?.setCamera({
             centerCoordinate: [loc.coords.longitude, loc.coords.latitude],
             zoomLevel: 15,
@@ -1465,8 +1839,123 @@ export default function MapScreen() {
     return () => { void sub.then((s) => s.remove()); };
   }, [perms.foreground]);
 
+  // When following a planned route, update the walked index and off-route state
+  // on every position fix.
+  const OFF_ROUTE_THRESHOLD_M = 75;
+  useEffect(() => {
+    if (!followingRoute || !currentLocation) return;
+    const allPts = followingRoute.legs.flatMap((l) => l.points);
+    const flatCoords = allPts.map((p): [number, number] => [p.lng, p.lat]);
+    if (flatCoords.length < 2) return;
+    const { latitude: lat, longitude: lng } = currentLocation;
+    // Find the nearest segment (not just nearest point) for accurate distance.
+    // Project the user position onto each AB segment in lat/lng space, clamp to
+    // [0,1], then haversine to that closest point on the segment.
+    let minDist = Infinity;
+    let nearestIdx = 0;
+    for (let i = 0; i < flatCoords.length - 1; i++) {
+      const [lng1, lat1] = flatCoords[i]!;
+      const [lng2, lat2] = flatCoords[i + 1]!;
+      const dx = lat2 - lat1;
+      const dy = lng2 - lng1;
+      const lenSq = dx * dx + dy * dy;
+      let cLat: number, cLng: number;
+      if (lenSq === 0) {
+        cLat = lat1; cLng = lng1;
+      } else {
+        const t = Math.max(0, Math.min(1, ((lat - lat1) * dx + (lng - lng1) * dy) / lenSq));
+        cLat = lat1 + t * dx;
+        cLng = lng1 + t * dy;
+      }
+      const d = haversineMetres(lat, lng, cLat, cLng);
+      if (d < minDist) { minDist = d; nearestIdx = i; }
+    }
+    setFollowWalkedIdx(nearestIdx);
+    const offRoute = minDist > OFF_ROUTE_THRESHOLD_M;
+    setDistToRouteM(minDist === Infinity ? null : minDist);
+    setIsOffRoute(offRoute);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentLocation, followingRoute]);
+
+  // Clear follow state when the walk finishes.
+  useEffect(() => {
+    if (state.phase === 'idle' || state.phase === 'completed' || state.phase === 'completing') {
+      setFollowingRoute(null);
+      setFollowWalkedIdx(0);
+      setIsOffRoute(false);
+      setDistToRouteM(null);
+    }
+  }, [state.phase]);
+
   // Auto-open record sheet when recording starts
   const isActive = state.phase === 'recording' || state.phase === 'paused';
+
+  // ── Off-route haptic pulse engine ────────────────────────────────────────
+  // Keep the config ref in sync on every render so the stable interval always
+  // reads fresh values without being recreated (avoids restarting the timer
+  // on every GPS fix which would prevent slow pulses from ever firing).
+  hapticConfigRef.current = {
+    distM: distToRouteM,
+    startM: flags.hapticOffRouteStartM,
+    maxM: flags.hapticOffRouteMaxM,
+    active: !!(followingRoute && isActive && flags.hapticOffRouteEnabled),
+  };
+
+  // Stable 300 ms tick — set up once on mount, reads config via ref each tick.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const { distM, startM, maxM, active } = hapticConfigRef.current;
+      if (!active || distM === null || distM <= startM) return;
+      // t = 0 at the start threshold, 1 at the max-urgency threshold
+      const t = Math.min(1, (distM - startM) / Math.max(1, maxM - startM));
+      // Pulse interval: 3 000 ms (gentle) → 500 ms (urgent)
+      const intervalMs = Math.round(3000 - t * 2500);
+      const now = Date.now();
+      if (now - lastHapticTimeRef.current < intervalMs) return;
+      lastHapticTimeRef.current = now;
+      const style =
+        t < 1 / 3 ? Haptics.ImpactFeedbackStyle.Light
+        : t < 2 / 3 ? Haptics.ImpactFeedbackStyle.Medium
+        : Haptics.ImpactFeedbackStyle.Heavy;
+      void Haptics.impactAsync(style);
+    }, 300);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Queued walk auto-start ──────────────────────────────────────────────
+  // useEffect approach: all deps are listed explicitly so there is no
+  // stale-closure risk (unlike the watchPositionAsync callback pattern).
+  useEffect(() => {
+    // Block only while a walk is actively recording or paused — allow when
+    // idle OR completed (a previous walk may have been completed without reset).
+    if (!queuedWalk || isActive || !currentLocation || autoStartFiredRef.current) return;
+    if (
+      isWithinStartThreshold(
+        currentLocation.latitude,
+        currentLocation.longitude,
+        queuedWalk,
+        flags.startProximityThresholdM,
+      )
+    ) {
+      autoStartFiredRef.current = true;
+      const routeToFollow = queuedWalk;
+      clearQueuedWalk();
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // If a previous walk was completed but not yet reset, clear it first so
+      // start() begins from a clean idle state.
+      if (state.phase === 'completed') reset();
+      void start().then(() => {
+        setFollowingRoute(routeToFollow);
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentLocation, queuedWalk, isActive, flags.startProximityThresholdM]);
+
+  // Reset the one-shot guard whenever the queued walk is cleared.
+  useEffect(() => {
+    if (!queuedWalk) autoStartFiredRef.current = false;
+  }, [queuedWalk]);
 
   const walkStartedAt =
     state.phase === 'recording' || state.phase === 'paused' ? state.startedAt : null;
@@ -1499,10 +1988,12 @@ export default function MapScreen() {
     const adj = (n: number) => `${n + navAdjPct}%`;
     if (activeSheet === 'profile') return [adj(92)];
     if (activeSheet === 'sessions') return [adj(92)];
+    if (activeSheet === 'queued-walk') return [adj(50)];
     if (activeSheet === 'explore') {
-      // 17 points every 3% (45 → 93) — close enough together to feel like
-      // free-form resizing rather than snapping between two fixed positions.
-      return Array.from({ length: 17 }, (_, i) => adj(45 + i * 3));
+      // Two snap points: a map-peek height and a full-list height.
+      // Opening at the top snap means BottomSheetScrollView scrolls freely;
+      // the user drags the handle down to expose more map.
+      return [adj(45), adj(92)];
     }
     if (activeSheet === 'record' && isActive) return [adj(23), adj(33), adj(50), adj(70), adj(92)];
     return [adj(62)]; // record idle at same height as active index 3 — no jump on recording start
@@ -1569,7 +2060,17 @@ export default function MapScreen() {
         sheetRef.current?.close();
       } else {
         setActiveSheet('explore');
-        setExploreSelectedRoute(null);
+        setExploreHighlightedRoute(null);
+        setExploreDetailRoute(null);
+        setExploreGroupedRoutes(null);
+        // Clear any camera edge-inset padding set by a previous sheet (e.g. Sessions
+        // at 92%). Mapbox persists edge insets between commands, so without this reset
+        // a subsequent fitBounds call compounds the old inset with its own padding,
+        // pushing the route bounds off-screen.
+        cameraRef.current?.setCamera({
+          padding: { paddingBottom: 0, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+          animationDuration: 0,
+        });
         // Seed initial bounds from current location so Convex query fires immediately
         if (currentLocation) {
           setExploreViewBounds({
@@ -1579,7 +2080,7 @@ export default function MapScreen() {
             maxLng: currentLocation.longitude + 0.05,
           });
         }
-        scheduleSnap(0);
+        scheduleSnap(0); // open at 45% peek — user can drag handle up for more
       }
       return;
     }
@@ -1606,27 +2107,115 @@ export default function MapScreen() {
     }
 
     if (tab === 'record') {
+      // When a walk is queued but not yet recording: tapping "Walk Ready" opens
+      // the Explore sheet showing that route's detail so the user can cancel.
+      if (queuedWalk !== null && !isActive) {
+        // Toggle: if the queued-walk sheet is already open, close it.
+        if (activeSheet === 'queued-walk') {
+          if (pendingSnapRef.current !== null) { clearTimeout(pendingSnapRef.current); pendingSnapRef.current = null; }
+          pendingFinalSnapRef.current = null;
+          ignoreNextCloseRef.current = true;
+          setActiveSheet(null);
+          sheetRef.current?.close();
+          return;
+        }
+        // Open the queued-walk detail sheet and fit the camera to the route.
+        setActiveSheet('queued-walk');
+        cameraRef.current?.setCamera({
+          padding: { paddingBottom: 0, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+          animationDuration: 0,
+        });
+        const allPts = queuedWalk.legs.flatMap((l) => l.points);
+        if (allPts.length > 0) {
+          const lats = allPts.map((p) => p.lat);
+          const lngs = allPts.map((p) => p.lng);
+          const sheetPx = windowHeight * 0.5;
+          cameraRef.current?.fitBounds(
+            [Math.max(...lngs), Math.max(...lats)],
+            [Math.min(...lngs), Math.min(...lats)],
+            [insets.top + 80, 40, sheetPx + 20, 40],
+            600,
+          );
+        }
+        scheduleSnap(0);
+        return;
+      }
+
       if ((state.phase === 'idle' || state.phase === 'completed') && perms.foreground === 'granted') {
         // Ensure we're fully reset before prompting to start again
         if (state.phase === 'completed') reset();
-        // Not yet recording — ask first, then start + open sheet on confirm.
-        Alert.alert(
-          'Start recording?',
-          'Your walk will be tracked and saved.',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Start',
-              onPress: () => {
-                void start({ isLive: isLiveWalk });
-                // Open the sheet at snap 0; the isActive useEffect will expand
-                // snap points and snap to the correct position once recording begins.
-                setActiveSheet('record');
-                scheduleSnap(0);
+
+        const startRecording = () => {
+          void start({ isLive: isLiveWalk });
+          // Open the sheet at snap 0; the isActive useEffect will expand
+          // snap points and snap to the correct position once recording begins.
+          setActiveSheet('record');
+          scheduleSnap(0);
+        };
+
+        // Scan local cache for routes whose start point is within 50 m.
+        const nearby = currentLocation
+          ? findNearbyRoutes(currentLocation.latitude, currentLocation.longitude, 50)
+          : [];
+
+        if (nearby.length === 1) {
+          // Exactly one nearby route — offer to follow it directly.
+          const nearbyRoute = nearby[0]!;
+          Alert.alert(
+            'Nearby route detected',
+            `"${nearbyRoute.title}" starts near your location.`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Record my route', onPress: startRecording },
+              {
+                text: 'Follow route',
+                onPress: () => {
+                  // Open the explore sheet directly on this route's detail panel.
+                  setExploreHighlightedRoute(nearbyRoute);
+                  setExploreDetailRoute(nearbyRoute);
+                  setActiveSheet('explore');
+                  scheduleSnap(0);
+                },
               },
-            },
-          ],
-        );
+            ],
+          );
+        } else if (nearby.length > 1) {
+          // Multiple nearby routes — let the user pick from the explore sheet.
+          Alert.alert(
+            'Nearby routes detected',
+            `${nearby.length} saved routes start near your location.`,
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Record my route', onPress: startRecording },
+              {
+                text: 'Pick route',
+                onPress: () => {
+                  // Open the explore sheet centred on the user so nearby routes
+                  // appear naturally in the list.
+                  setActiveSheet('explore');
+                  scheduleSnap(0);
+                  if (currentLocation) {
+                    cameraRef.current?.setCamera({
+                      centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
+                      zoomLevel: 15.5,
+                      animationDuration: 400,
+                    });
+                  }
+                },
+              },
+            ],
+          );
+        } else {
+          // No nearby routes — standard confirmation.
+          Alert.alert(
+            'Start recording?',
+            'Your walk will be tracked and saved.',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Start', onPress: startRecording },
+            ],
+          );
+        }
         return;
       }
       // Already recording/paused — just toggle the sheet as normal.
@@ -1673,8 +2262,8 @@ export default function MapScreen() {
     if (!currentLocation || isReviewActive) return;
 
     if (activeSheetRef.current === 'explore') {
-      if (exploreSelectedRoute) {
-        const allPts = exploreSelectedRoute.legs.flatMap((l) => l.points);
+      if (exploreHighlightedRoute) {
+        const allPts = exploreHighlightedRoute.legs.flatMap((l) => l.points);
         if (allPts.length > 0) {
           const lats = allPts.map((p) => p.lat);
           const lngs = allPts.map((p) => p.lng);
@@ -1682,6 +2271,11 @@ export default function MapScreen() {
             ? parseFloat(String(snapPoints[sheetSnapIndex])) / 100
             : 0;
           const sheetPx = windowHeight * sheetHeightPct;
+          // Clear persisted edge insets before fitting so they don't compound.
+          cameraRef.current?.setCamera({
+            padding: { paddingBottom: 0, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+            animationDuration: 0,
+          });
           cameraRef.current?.fitBounds(
             [Math.max(...lngs), Math.max(...lats)],
             [Math.min(...lngs), Math.min(...lats)],
@@ -1689,6 +2283,30 @@ export default function MapScreen() {
             300,
           );
         }
+      }
+      return;
+    }
+
+    // Queued-walk sheet: re-fit to the queued route whenever the snap settles.
+    if (activeSheetRef.current === 'queued-walk' && queuedWalk) {
+      const allPts = queuedWalk.legs.flatMap((l) => l.points);
+      if (allPts.length > 0) {
+        const lats = allPts.map((p) => p.lat);
+        const lngs = allPts.map((p) => p.lng);
+        const sheetHeightPct = sheetSnapIndex >= 0 && snapPoints[sheetSnapIndex]
+          ? parseFloat(String(snapPoints[sheetSnapIndex])) / 100
+          : 0;
+        const sheetPx = windowHeight * sheetHeightPct;
+        cameraRef.current?.setCamera({
+          padding: { paddingBottom: 0, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+          animationDuration: 0,
+        });
+        cameraRef.current?.fitBounds(
+          [Math.max(...lngs), Math.max(...lats)],
+          [Math.min(...lngs), Math.min(...lats)],
+          [insets.top + 80, 40, sheetPx + 20, 40],
+          300,
+        );
       }
       return;
     }
@@ -1824,25 +2442,51 @@ export default function MapScreen() {
           coordinates={isReviewActive ? [] : coordinates}
           showUserLocation={perms.foreground === 'granted'}
         />
+        {/* Queued walk — dashed line overlay */}
+        {queuedWalk !== null && !isReviewActive && (
+          <QueuedRouteLayer route={queuedWalk} />
+        )}
+
+        {/* Follow-route overlay — planned route + walked portion */}
+        {followingRoute !== null && isActive && !isReviewActive && (
+          <FollowRouteLayer
+            route={followingRoute}
+            walkedPointIndex={followWalkedIdx}
+            showCamera={false}
+          />
+        )}
+
         {/* Explore route pins + selected route line */}
         {activeSheet === 'explore' && (
           <ExploreMapLayer
+            routes={exploreRoutes}
             viewBounds={exploreViewBounds}
             zoom={exploreZoom}
-            selectedRoute={exploreSelectedRoute}
+            highlightedRoute={exploreHighlightedRoute}
             onSelectRoute={(route) => {
-              setExploreSelectedRoute(route);
-              const allPts = route.legs.flatMap((l) => l.points);
-              if (allPts.length > 0) {
-                const lats = allPts.map((p) => p.lat);
-                const lngs = allPts.map((p) => p.lng);
-                const sheetPx = windowHeight * 0.45;
-                cameraRef.current?.fitBounds(
-                  [Math.max(...lngs), Math.max(...lats)],
-                  [Math.min(...lngs), Math.min(...lats)],
-                  [insets.top + 80, 40, sheetPx + 20, 40],
-                  600,
-                );
+              if (exploreHighlightedRoute?._id === route._id) {
+                // Tap highlighted pin → show detail
+                setExploreDetailRoute(route);
+              } else {
+                // Tap new pin → highlight + fly
+                setExploreHighlightedRoute(route);
+                setExploreDetailRoute(null);
+                const allPts = route.legs.flatMap((l) => l.points);
+                if (allPts.length > 0) {
+                  const lats = allPts.map((p) => p.lat);
+                  const lngs = allPts.map((p) => p.lng);
+                  const sheetPx = windowHeight * 0.45;
+                  cameraRef.current?.setCamera({
+                    padding: { paddingBottom: 0, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+                    animationDuration: 0,
+                  });
+                  cameraRef.current?.fitBounds(
+                    [Math.max(...lngs), Math.max(...lats)],
+                    [Math.min(...lngs), Math.min(...lats)],
+                    [insets.top + 80, 40, sheetPx + 20, 40],
+                    600,
+                  );
+                }
               }
             }}
             onClusterZoom={(lat, lng, newZoom) => {
@@ -1851,6 +2495,11 @@ export default function MapScreen() {
                 zoomLevel: newZoom,
                 animationDuration: 400,
               });
+            }}
+            onGroupSelect={(routes) => {
+              setExploreGroupedRoutes(routes);
+              setExploreHighlightedRoute(null);
+              setExploreDetailRoute(null);
             }}
           />
         )}
@@ -1865,9 +2514,9 @@ export default function MapScreen() {
             cameraPaddingTop={reviewOverlayOptions.cameraPaddingTop}
             showPhotoMarkers={reviewOverlayOptions.showPhotoMarkers}
             focusCoordinate={reviewOverlayOptions.focusCoordinate}
-            onPhotoLongPress={reviewOverlayOptions.onPhotoLongPress}
+            {...(reviewOverlayOptions.onPhotoLongPress ? { onPhotoLongPress: reviewOverlayOptions.onPhotoLongPress } : {})}
             mode={reviewOverlayOptions.mode}
-            colours={reviewOverlayOptions.colours}
+            {...(reviewOverlayOptions.colours ? { colours: reviewOverlayOptions.colours } : {})}
           />
         )}
       </MapboxGL.MapView>
@@ -1878,8 +2527,14 @@ export default function MapScreen() {
           <RecordingStatusBadge
             status={state.phase}
             accuracyMetres={displayAccuracy}
+            {...(followingRoute ? { routeTitle: followingRoute.title } : {})}
             onPress={() => sheetEvents.open('record')}
           />
+          {followingRoute !== null && distToRouteM !== null && (
+            <View style={{ marginTop: Spacing.xs }}>
+              <RouteProximityBadge distanceM={distToRouteM} />
+            </View>
+          )}
         </View>
       )}
 
@@ -1889,7 +2544,7 @@ export default function MapScreen() {
           <View style={[styles.completingCard, { backgroundColor: colors.backgroundCard }]}>
             <ActivityIndicator color={colors.primary} size="large" />
             <Text style={[styles.completingText, { color: colors.text }]}>
-              Calculating your walk...
+              Processing your walk...
             </Text>
           </View>
         </View>
@@ -1918,6 +2573,7 @@ export default function MapScreen() {
         index={-1}
         enableDynamicSizing={false}
         enablePanDownToClose
+        enableContentPanningGesture={activeSheet !== 'explore' && activeSheet !== 'queued-walk'}
         backgroundStyle={{ backgroundColor: 'transparent' }}
         handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
         onChange={(index) => {
@@ -1992,17 +2648,63 @@ export default function MapScreen() {
             reset={reset}
           />
         )}
+        {activeSheet === 'queued-walk' && queuedWalk !== null && (
+          <ExploreSheetContent
+            viewBounds={null}
+            highlightedRoute={queuedWalk}
+            selectedRoute={queuedWalk}
+            isQueued
+            onHighlightRoute={() => {}}
+            onSelectRoute={() => {}}
+            onRoutesChange={() => {}}
+            onClearRoute={() => {
+              ignoreNextCloseRef.current = true;
+              sheetRef.current?.close();
+              setActiveSheet(null);
+            }}
+            onStartWalk={(route) => {
+              void start();
+              setFollowingRoute(route);
+              ignoreNextCloseRef.current = true;
+              sheetRef.current?.close();
+              setActiveSheet(null);
+            }}
+            onQueueWalk={() => {/* already queued — no-op */}}
+            onCancelWalk={() => {
+              clearQueuedWalk();
+              ignoreNextCloseRef.current = true;
+              sheetRef.current?.close();
+              setActiveSheet(null);
+            }}
+            onEditRoute={() => {
+              Alert.alert(
+                'Edit Route',
+                'Route editing is available on the web app at ramble.io.',
+                [{ text: 'OK' }],
+              );
+            }}
+            userLocation={currentLocation}
+            proximityThresholdM={flags.startProximityThresholdM}
+          />
+        )}
         {activeSheet === 'explore' && (
           <ExploreSheetContent
             viewBounds={exploreViewBounds}
-            selectedRoute={exploreSelectedRoute}
-            onSelectRoute={(route) => {
-              setExploreSelectedRoute(route);
+            highlightedRoute={exploreHighlightedRoute}
+            selectedRoute={exploreDetailRoute}
+            onRoutesChange={setExploreRoutes}
+            onHighlightRoute={(route) => {
+              setExploreHighlightedRoute(route);
+              setExploreDetailRoute(null);
               const allPts = route.legs.flatMap((l) => l.points);
               if (allPts.length > 0) {
                 const lats = allPts.map((p) => p.lat);
                 const lngs = allPts.map((p) => p.lng);
                 const sheetPx = windowHeight * 0.45;
+                cameraRef.current?.setCamera({
+                  padding: { paddingBottom: 0, paddingTop: 0, paddingLeft: 0, paddingRight: 0 },
+                  animationDuration: 0,
+                });
                 cameraRef.current?.fitBounds(
                   [Math.max(...lngs), Math.max(...lats)],
                   [Math.min(...lngs), Math.min(...lats)],
@@ -2011,11 +2713,26 @@ export default function MapScreen() {
                 );
               }
             }}
-            onClearRoute={() => setExploreSelectedRoute(null)}
+            onSelectRoute={(route) => {
+              setExploreDetailRoute(route);
+            }}
+            onClearRoute={() => setExploreDetailRoute(null)}
             onStartWalk={(route) => {
+              void start();
+              setFollowingRoute(route);
+              ignoreNextCloseRef.current = true;
+              sheetRef.current?.close();
+              setActiveSheet(null);
+            }}
+            onQueueWalk={(route) => {
+              setQueuedWalk(route);
+              setExploreDetailRoute(null);
+              ignoreNextCloseRef.current = true;
+              sheetRef.current?.close();
+              setActiveSheet(null);
               Alert.alert(
-                'Start Walk',
-                `Follow "${route.title}"?\n\nRoute following will be available in a future update.`,
+                'Walk queued',
+                `Recording will start automatically when you reach "${route.title}".`,
                 [{ text: 'OK' }],
               );
             }}
@@ -2026,6 +2743,11 @@ export default function MapScreen() {
                 [{ text: 'OK' }],
               );
             }}
+            userLocation={currentLocation}
+            proximityThresholdM={flags.startProximityThresholdM}
+            directDetail={flags.exploreDirectDetail}
+            groupedRoutes={exploreGroupedRoutes}
+            onClearGroup={() => setExploreGroupedRoutes(null)}
           />
         )}
         {activeSheet === 'profile' && (
@@ -2038,6 +2760,29 @@ export default function MapScreen() {
             onGpsAccuracyMultiplierChange={(v) => setFlag('gpsAccuracyMultiplier', v)}
             forcePedometerSteps={flags.forcePedometerSteps}
             onToggleForcePedometerSteps={(v) => setFlag('forcePedometerSteps', v)}
+            startProximityThresholdM={flags.startProximityThresholdM}
+            onStartProximityThresholdMChange={(v) => setFlag('startProximityThresholdM', v)}
+            hapticOffRouteEnabled={flags.hapticOffRouteEnabled}
+            onToggleHapticOffRouteEnabled={(v) => setFlag('hapticOffRouteEnabled', v)}
+            hapticOffRouteStartM={flags.hapticOffRouteStartM}
+            onHapticOffRouteStartMChange={(v) => setFlag('hapticOffRouteStartM', v)}
+            hapticOffRouteMaxM={flags.hapticOffRouteMaxM}
+            onHapticOffRouteMaxMChange={(v) => setFlag('hapticOffRouteMaxM', v)}
+            hapticMinImpact={flags.hapticMinImpact}
+            onHapticMinImpactChange={(v) => setFlag('hapticMinImpact', v)}
+            hapticMaxImpact={flags.hapticMaxImpact}
+            onHapticMaxImpactChange={(v) => setFlag('hapticMaxImpact', v)}
+            hapticSlowIntervalMs={flags.hapticSlowIntervalMs}
+            onHapticSlowIntervalMsChange={(v) => setFlag('hapticSlowIntervalMs', v)}
+            hapticFastIntervalMs={flags.hapticFastIntervalMs}
+            onHapticFastIntervalMsChange={(v) => setFlag('hapticFastIntervalMs', v)}
+            hapticTestEnabled={flags.hapticTestEnabled}
+            onToggleHapticTestEnabled={(v) => setFlag('hapticTestEnabled', v)}
+            hapticTestDistanceM={flags.hapticTestDistanceM}
+            onHapticTestDistanceMChange={(v) => setFlag('hapticTestDistanceM', v)}
+            exploreDirectDetail={flags.exploreDirectDetail}
+            onToggleExploreDirectDetail={(v) => setFlag('exploreDirectDetail', v)}
+            flags={flags}
           />
         )}
       </BottomSheet>
@@ -2136,6 +2881,7 @@ export default function MapScreen() {
         insets={insets}
         isRecording={state.phase === 'recording'}
         isPaused={state.phase === 'paused'}
+        isWalkQueued={queuedWalk !== null && !isActive}
       />
     </View>
   );

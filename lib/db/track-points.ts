@@ -1,3 +1,4 @@
+import { randomUUID } from 'expo-crypto';
 import { db } from './client';
 
 export interface TrackPoint {
@@ -107,6 +108,30 @@ export function markPointsClean(ids: string[]): void {
     `UPDATE track_points SET is_clean = 1 WHERE id IN (${placeholders})`,
     ...ids,
   );
+}
+
+/**
+ * Batch-inserts track points downloaded from Convex.
+ * All points are marked is_clean = 1 (Convex only stores clean points).
+ * Uses INSERT OR IGNORE so re-running a down-sync is safe.
+ */
+export function insertDownloadedPoints(
+  walkId: string,
+  points: Array<{ timestamp: number; latitude: number; longitude: number; altitudeMetres?: number }>,
+): void {
+  for (const pt of points) {
+    db.runSync(
+      `INSERT OR IGNORE INTO track_points
+         (id, walk_id, timestamp, latitude, longitude, altitude_metres, speed_mps, accuracy_metres, is_clean)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, 0, 1)`,
+      randomUUID(),
+      walkId,
+      pt.timestamp,
+      pt.latitude,
+      pt.longitude,
+      pt.altitudeMetres ?? null,
+    );
+  }
 }
 
 export function getCleanPointsForWalk(walkId: string): TrackPoint[] {

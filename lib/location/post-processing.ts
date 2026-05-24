@@ -3,6 +3,7 @@ import { randomUUID } from 'expo-crypto';
 import { createSyncJob } from '../db/sync-jobs';
 import { getPointsForWalk, markPointsClean } from '../db/track-points';
 import { getWalk, updateWalkStats, type WalkStats } from '../db/walks';
+import { appLog } from '../diagnostics/logger';
 import { readCaloriesForWalk } from '../health-connect/calories';
 import { writeExerciseSession } from '../health-connect/exercise-session';
 import { readHeartRateForWalk } from '../health-connect/heart-rate';
@@ -18,6 +19,16 @@ const MIN_ALTITUDE_COVERAGE = 0.5; // 50% of clean points must have altitude
  * Writes the resulting stats back to SQLite and creates a sync job.
  */
 export async function runPostProcessing(walkId: string, stepCount?: number): Promise<void> {
+  try {
+    await _runPostProcessing(walkId, stepCount);
+  } catch (err) {
+    appLog('error', 'post-processing', 'Post-processing pipeline failed', err, { walkId });
+    // Re-throw so the caller (walk stop handler) can still navigate to summary.
+    throw err;
+  }
+}
+
+async function _runPostProcessing(walkId: string, stepCount?: number): Promise<void> {
   const walk = getWalk(walkId);
   if (!walk) return;
 

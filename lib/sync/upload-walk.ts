@@ -3,11 +3,12 @@ import * as FileSystem from 'expo-file-system/legacy';
 import { api } from '@/convex/_generated/api';
 import type { ConvexReactClient } from 'convex/react';
 import { db } from '../db/client';
-import { updateJobProgress } from '../db/sync-jobs';
+import { updateCoreSyncStatus, updateJobPhase, updateJobProgress, updatePhotoSyncStatus, type SyncJob } from '../db/sync-jobs';
 import { getPointsForWalk, getUnsyncedPointsForWalk, markPointsSynced } from '../db/track-points';
-import { getPhotosForWalk, updatePhotoAfterSync } from '../db/walk-photos';
+import { getPhotosForWalk, updatePhotoAfterSync, updatePhotoStatus } from '../db/walk-photos';
 import type { WalkStats } from '../db/walks';
 import { getWalk, updateWalkConvexId } from '../db/walks';
+import { appLog } from '../diagnostics/logger';
 import { SYNC_BATCH_SIZE } from './sync-config';
 
 type ConvexStats = {
@@ -96,6 +97,10 @@ export async function uploadWalk(
     updateWalkConvexId(walkId, convexWalkId);
   }
 
+  // Phase 1 complete: walk exists on Convex.
+  updateCoreSyncStatus(opts.jobId, 'in_progress');
+  updateJobPhase(opts.jobId, 2);
+
   // 2 – Upload remaining track points.
   // For live walks, most points were already sent by use-live-walk-sync so we
   // only upload points with synced_at IS NULL. For normal walks, upload all.
@@ -166,35 +171,71 @@ export async function uploadWalk(
     );
   }
 
-  // 3 – Upload photos
+  // Phase 2 complete: all track points confirmed on Convex.
+  updateJobPhase(opts.jobId, 3);
+
+  // 3 – Upload photos (failures are non-fatal: core sync completes regardless)
   const photos = getPhotosForWalk(walkId);
-  for (const photo of photos) {
-    if (photo.convexId) continue; // already uploaded
+  const photosToUpload = photos.filter((p) => !p.convexId);
 
-    const uploadUrl: string = await convex.action(
-      api.walk_photos.generateUploadUrl,
-      {},
-    );
+  if (photosToUpload.length > 0) {
+    updatePhotoSyncStatus(opts.jobId, 'pending');
+    let successCount = 0;
+    let failCount = 0;
 
-    const uploadResult = await FileSystem.uploadAsync(uploadUrl, photo.localUri, {
-      httpMethod: 'POST',
-      uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
-      mimeType: 'image/jpeg',
-    });
+    for (const photo of photosToUpload) {
+      const localUri = photo.localAssetUri ?? photo.localUri;
 
-    const { storageId } = JSON.parse(uploadResult.body) as { storageId: string };
+      // Asset may have been deleted from the device since capture.
+      const fileInfo = await FileSystem.getInfoAsync(localUri);
+      if (!fileInfo.exists) {
+        console.warn(`[sync] photo asset not found, skipping: ${localUri}`);
+        updatePhotoStatus(photo.id, 'upload_skipped');
+        continue;
+      }
 
-    const convexPhotoId = await convex.mutation(api.walk_photos.create, {
-      walkId: convexWalkId as any,
-      timestamp: photo.timestamp,
-      latitude: photo.latitude,
-      longitude: photo.longitude,
-      storageId: storageId as any,
-      ...(photo.caption ? { caption: photo.caption } : {}),
-    });
+      try {
+        const uploadUrl: string = await convex.action(
+          api.walk_photos.generateUploadUrl,
+          {},
+        );
 
-    updatePhotoAfterSync(photo.id, convexPhotoId, storageId);
+        const uploadResult = await FileSystem.uploadAsync(uploadUrl, localUri, {
+          httpMethod: 'POST',
+          uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+          mimeType: 'image/jpeg',
+        });
+
+        const { storageId } = JSON.parse(uploadResult.body) as { storageId: string };
+
+        const convexPhotoId = await convex.mutation(api.walk_photos.create, {
+          walkId: convexWalkId as any,
+          timestamp: photo.timestamp,
+          latitude: photo.latitude,
+          longitude: photo.longitude,
+          storageId: storageId as any,
+          ...(photo.caption ? { caption: photo.caption } : {}),
+        });
+
+        // updatePhotoAfterSync sets photo_status = 'uploaded' as well as convex_id/storage_id
+        updatePhotoAfterSync(photo.id, convexPhotoId, storageId);
+        successCount++;
+      } catch (err) {
+        console.warn(`[sync] photo upload failed for photo ${photo.id}:`, err);
+        appLog('warn', 'sync', `Photo upload failed`, err, { photoId: photo.id });
+        updatePhotoStatus(photo.id, 'upload_failed');
+        failCount++;
+      }
+    }
+
+    const photoSyncStatus: SyncJob['photoSyncStatus'] =
+      failCount === 0 ? 'synced' : successCount === 0 ? 'failed' : 'partial';
+    updatePhotoSyncStatus(opts.jobId, photoSyncStatus);
   }
+
+  // Phase 4 complete: walk core data fully synced regardless of photo outcome.
+  updateCoreSyncStatus(opts.jobId, 'synced');
+  updateJobPhase(opts.jobId, 4);
 
   return convexWalkId;
 }

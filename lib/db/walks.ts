@@ -35,6 +35,10 @@ export interface Walk {
   createdAt: number;
   /** True when the user opted in to Live Broadcast for this walk. */
   isLive: boolean;
+  /** Decimated display polyline as JSON-encoded [[lat,lng],…] array. Null until backfill runs. */
+  displayPolylineJson: string | null;
+  /** Version of the algorithm used to produce displayPolylineJson. */
+  displayPolylineVersion: number | null;
 }
 
 type WalkRow = {
@@ -48,6 +52,8 @@ type WalkRow = {
   convex_id: string | null;
   created_at: number;
   is_live: number;
+  display_polyline_json: string | null;
+  display_polyline_version: number | null;
 };
 
 function rowToWalk(row: WalkRow): Walk {
@@ -62,6 +68,8 @@ function rowToWalk(row: WalkRow): Walk {
     convexId: row.convex_id,
     createdAt: row.created_at,
     isLive: row.is_live === 1,
+    displayPolylineJson: row.display_polyline_json ?? null,
+    displayPolylineVersion: row.display_polyline_version ?? null,
   };
 }
 
@@ -78,6 +86,38 @@ export function createWalk(walk: {
     walk.title ?? null,
     walk.startedAt,
     walk.deviceId,
+    walk.isLive ? 1 : 0,
+    Date.now(),
+  );
+}
+
+/**
+ * Inserts a completed walk downloaded from Convex into the local SQLite DB.
+ * Uses INSERT OR IGNORE so repeated down-sync calls are safe.
+ */
+export function insertDownloadedWalk(walk: {
+  id: string;
+  convexId: string;
+  title: string | null;
+  status: string;
+  startedAt: number;
+  endedAt: number | null;
+  deviceId: string;
+  stats: WalkStats | null;
+  isLive: boolean;
+}): void {
+  db.runSync(
+    `INSERT OR IGNORE INTO walks
+       (id, title, status, started_at, ended_at, device_id, stats_json, convex_id, is_live, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    walk.id,
+    walk.title,
+    walk.status,
+    walk.startedAt,
+    walk.endedAt,
+    walk.deviceId,
+    walk.stats ? JSON.stringify(walk.stats) : null,
+    walk.convexId,
     walk.isLive ? 1 : 0,
     Date.now(),
   );
@@ -226,4 +266,31 @@ export function setActiveWalkId(id: string): void {
 
 export function clearActiveWalkId(): void {
   db.runSync(`DELETE FROM kv_store WHERE key = ?`, ACTIVE_WALK_KEY);
+}
+
+/**
+ * Returns IDs of completed walks whose display polyline has not yet been
+ * computed or was computed at an older algorithm version.
+ */
+export function listWalksNeedingDisplayPolyline(currentVersion: number): string[] {
+  const rows = db.getAllSync<{ id: string }>(
+    `SELECT id FROM walks
+     WHERE status = 'completed'
+       AND (display_polyline_json IS NULL OR display_polyline_version < ?)`,
+    currentVersion,
+  );
+  return rows.map((r) => r.id);
+}
+
+export function updateWalkDisplayPolyline(
+  id: string,
+  polylineJson: string,
+  version: number,
+): void {
+  db.runSync(
+    `UPDATE walks SET display_polyline_json = ?, display_polyline_version = ? WHERE id = ?`,
+    polylineJson,
+    version,
+    id,
+  );
 }

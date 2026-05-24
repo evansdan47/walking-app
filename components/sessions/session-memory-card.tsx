@@ -5,6 +5,7 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { METRIC_ICONS } from '@/constants/metric-icons';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import type { WalkSyncStatus } from '@/lib/db/sync-jobs';
 import type { WalkPhoto } from '@/lib/db/walk-photos';
 import type { Walk } from '@/lib/db/walks';
 
@@ -16,6 +17,7 @@ interface SessionMemoryCardProps {
   photos: WalkPhoto[];
   totalPhotos: number;
   routeCoordinates: [number, number][];
+  syncStatus: WalkSyncStatus | null;
   onPress: () => void;
 }
 
@@ -88,6 +90,7 @@ export function SessionMemoryCard({
   photos,
   totalPhotos,
   routeCoordinates,
+  syncStatus,
   onPress,
 }: SessionMemoryCardProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
@@ -185,6 +188,19 @@ export function SessionMemoryCard({
               )}
             </View>
           )}
+          {/* Photo sync badge */}
+          {syncStatus?.photoSyncStatus === 'failed' && (
+            <View style={[styles.syncBadge, styles.syncBadgeError]}>
+              <IconSymbol name="exclamationmark.triangle" size={10} color="#fff" />
+              <Text style={styles.syncBadgeText}>Photo upload issue</Text>
+            </View>
+          )}
+          {(syncStatus?.photoSyncStatus === 'pending' || syncStatus?.photoSyncStatus === 'partial') && (
+            <View style={[styles.syncBadge, styles.syncBadgePending]}>
+              <IconSymbol name="icloud.and.arrow.up" size={10} color="#fff" />
+              <Text style={styles.syncBadgeText}>Photos uploading…</Text>
+            </View>
+          )}
         </View>
 
         {/* Chevron */}
@@ -276,5 +292,26 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: 22,
     lineHeight: 24,
+  },
+  syncBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    marginTop: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 20,
+  },
+  syncBadgePending: {
+    backgroundColor: '#d97706',
+  },
+  syncBadgeError: {
+    backgroundColor: '#dc2626',
+  },
+  syncBadgeText: {
+    fontFamily: Typography.fontMedium,
+    fontSize: 11,
+    color: '#fff',
   },
 });

@@ -1,6 +1,6 @@
-import { useEffect, useRef } from 'react';
-import { Animated, Image, StyleSheet, Text, View } from 'react-native';
 import { Palette, Typography } from '@/constants/theme';
+import { useEffect, useRef } from 'react';
+import { Animated, Image, ImageBackground, StyleSheet, Text } from 'react-native';
 
 interface Props {
   onDone: () => void;
@@ -9,21 +9,20 @@ interface Props {
 /**
  * Custom in-app splash overlay.
  *
- * Rendered immediately after fonts load, on top of the full app tree.
- * It mirrors the native splash background so the handoff is seamless, then
- * fades out after a short display to reveal the app underneath.
+ * Full-screen background image with logo + wordmark at the top and a tagline
+ * at the bottom. Fades out after a short hold to reveal the app underneath.
  *
  * The native SplashScreen is hidden by the caller before this mounts.
  */
 export function SplashOverlay({ onDone }: Props) {
   const opacity = useRef(new Animated.Value(1)).current;
-  const textOpacity = useRef(new Animated.Value(0)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Fade the wordmark + tagline in quickly
-    Animated.timing(textOpacity, {
+    // Fade the logo + text in quickly
+    Animated.timing(contentOpacity, {
       toValue: 1,
-      duration: 350,
+      duration: 400,
       useNativeDriver: true,
     }).start();
 
@@ -31,29 +30,39 @@ export function SplashOverlay({ onDone }: Props) {
     const timer = setTimeout(() => {
       Animated.timing(opacity, {
         toValue: 0,
-        duration: 500,
+        duration: 600,
         useNativeDriver: true,
       }).start(({ finished }) => {
         if (finished) onDone();
       });
-    }, 700);
+    }, 1200);
 
     return () => clearTimeout(timer);
-  }, [opacity, textOpacity, onDone]);
+  }, [opacity, contentOpacity, onDone]);
 
   return (
     <Animated.View style={[styles.container, { opacity }]}>
-      <View style={styles.content}>
-        <Image
-          source={require('@/assets/images/splash-icon.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <Animated.View style={[styles.textBlock, { opacity: textOpacity }]}>
-          <Text style={styles.wordmark}>Rambleio</Text>
-          <Text style={styles.tagline}>Walk more. Explore more.</Text>
+      <ImageBackground
+        source={require('@/assets/images/splash-background.png')}
+        style={styles.background}
+        resizeMode="cover"
+      >
+        {/* Top: logo + wordmark */}
+        <Animated.View style={[styles.topContent, { opacity: contentOpacity }]}>
+          <Image
+            source={require('@/assets/images/splash-icon.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.wordmark}>rambleio</Text>
+          <Text style={styles.tagline}>Record. Review. Follow.</Text>
         </Animated.View>
-      </View>
+
+        {/* Bottom: dark bar with tagline */}
+        <Animated.View style={[styles.bottomBar, { opacity: contentOpacity }]}>
+          <Text style={styles.bottomTagline}>Every step tells a story.</Text>
+        </Animated.View>
+      </ImageBackground>
     </Animated.View>
   );
 }
@@ -61,34 +70,45 @@ export function SplashOverlay({ onDone }: Props) {
 const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: Palette.ink[700], // #122518 — matches native splash bg
     zIndex: 9999,
-    alignItems: 'center',
-    justifyContent: 'center',
     pointerEvents: 'none' as const,
   },
-  content: {
+  background: {
+    flex: 1,
+    justifyContent: 'space-between',
+  },
+  topContent: {
     alignItems: 'center',
+    paddingTop: 100,
   },
   logo: {
-    width: 200,
-    height: 200,
-  },
-  textBlock: {
-    alignItems: 'center',
-    marginTop: 20,
+    width: 110,
+    height: 110,
   },
   wordmark: {
     fontFamily: Typography.fontDisplay,
-    fontSize: 36,
-    color: Palette.surface.base, // warm near-white
-    letterSpacing: 1.5,
+    fontSize: 40,
+    color: Palette.ink[700],
+    marginTop: 12,
+    letterSpacing: 0.5,
   },
   tagline: {
     fontFamily: Typography.fontRegular,
-    fontSize: 14,
-    color: Palette.slate[400],
+    fontSize: 15,
+    color: Palette.ink[600],
     marginTop: 6,
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
+  },
+  bottomBar: {
+    backgroundColor: Palette.ink[700],
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+  },
+  bottomTagline: {
+    fontFamily: Typography.fontRegular,
+    fontSize: 15,
+    color: Palette.slate[400],
+    letterSpacing: 0.4,
   },
 });

@@ -1,5 +1,6 @@
 import * as Location from 'expo-location';
 
+import { appLog } from '@/lib/diagnostics/logger';
 import { BACKGROUND_LOCATION_TASK } from '@/lib/location/background-task';
 
 const TRACKING_OPTIONS: Location.LocationTaskOptions = {
@@ -31,6 +32,11 @@ export function useLocationTask() {
           TRACKING_OPTIONS,
         );
       }
+    }).catch((err: unknown) => {
+      console.error('[useLocationTask] startTracking failed:', err);
+      appLog('error', 'location', 'startLocationUpdatesAsync failed', err);
+      // Re-throw so callers can handle (e.g. reset session state).
+      throw err;
     });
     return trackingLock;
   }

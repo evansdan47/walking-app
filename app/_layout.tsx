@@ -1,3 +1,5 @@
+import { AppErrorBoundary } from '@/components/shared/app-error-boundary';
+import { SplashOverlay } from '@/components/ui/splash-overlay';
 import { ClerkProvider } from '@clerk/expo';
 import {
     Inter_400Regular,
@@ -19,7 +21,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import { LogBox } from 'react-native';
-import { SplashOverlay } from '@/components/ui/splash-overlay';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 // @clerk/expo uses NativeEventEmitter with a native module that doesn't implement the
@@ -29,6 +30,10 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 LogBox.ignoreLogs([
   '`new NativeEventEmitter()` was called with a non-null argument without the required `addListener` method.',
   '`new NativeEventEmitter()` was called with a non-null argument without the required `removeListeners` method.',
+  // Convex HTTP transport constructs Response(body, {status: 0}) when a network
+  // request fails during reconnection (e.g. after long device idle). The client
+  // recovers automatically — suppress the dev overlay noise.
+  'Failed to construct \'Response\': The status provided (0) is outside the range',
 ]);
 
 // Must be imported at the root so the background task is registered
@@ -39,6 +44,7 @@ import '@/lib/location/background-task';
 // The token is exposed to the JS bundle via the EXPO_PUBLIC_ prefix.
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
+import { QueuedWalkProvider } from '@/contexts/queued-walk-context';
 import { ReviewRouteProvider } from '@/contexts/review-route-context';
 import { WalkSessionProvider } from '@/contexts/walk-session-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
@@ -90,34 +96,45 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <AppErrorBoundary>
       <ClerkProvider
         publishableKey={process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!}
         tokenCache={tokenCache}
       >
         <ConvexProviderWithAuth client={convex} useAuth={useConvexAuth}>
           <WalkSessionProvider>
-            <ReviewRouteProvider>
-              <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-                <Stack>
-                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                  <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-                  <Stack.Screen name="sso-callback" options={{ headerShown: false }} />
-                  <Stack.Screen
-                    name="walk-summary"
-                    options={{
-                      headerShown: false,
-                      presentation: 'transparentModal',
-                      animation: 'fade',
-                    }}
-                  />
-                </Stack>
+            <QueuedWalkProvider>
+              <ReviewRouteProvider>
+                <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                  <Stack>
+                    <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                    <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+                    <Stack.Screen name="sso-callback" options={{ headerShown: false }} />
+                    <Stack.Screen
+                      name="walk-summary"
+                      options={{
+                        headerShown: false,
+                        presentation: 'transparentModal',
+                        animation: 'fade',
+                      }}
+                    />
+                    <Stack.Screen
+                      name="walk-follow"
+                      options={{
+                        headerShown: false,
+                        presentation: 'fullScreenModal',
+                      }}
+                    />
+                  </Stack>
                 <StatusBar style="auto" />
               </ThemeProvider>
-            </ReviewRouteProvider>
+              </ReviewRouteProvider>
+            </QueuedWalkProvider>
           </WalkSessionProvider>
         </ConvexProviderWithAuth>
       </ClerkProvider>
       {showSplash && <SplashOverlay onDone={handleSplashDone} />}
+      </AppErrorBoundary>
     </GestureHandlerRootView>
   );
 }

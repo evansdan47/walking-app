@@ -13,6 +13,8 @@ interface RecordingStatusBadgeProps {
   status: BadgeStatus;
   /** Pass the GPS accuracy (metres) to show signal bars inline. */
   accuracyMetres?: number | null;
+  /** When provided (following a planned route), show the route title instead of the status label. */
+  routeTitle?: string | undefined;
   onPress?: () => void;
 }
 
@@ -69,7 +71,7 @@ const BARS: Record<SignalLevel, 1 | 2 | 3 | 4> = {
   strong: 4, good: 3, weak: 2, searching: 1,
 };
 
-export function RecordingStatusBadge({ status, accuracyMetres, onPress }: RecordingStatusBadgeProps) {
+export function RecordingStatusBadge({ status, accuracyMetres, routeTitle, onPress }: RecordingStatusBadgeProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const opacity = useRef(new Animated.Value(1)).current;
   // useWalkSessionContext is kept for the pulsing animation trigger only
@@ -98,17 +100,35 @@ export function RecordingStatusBadge({ status, accuracyMetres, onPress }: Record
 
   const inner = (
     <Animated.View style={[styles.badge, { backgroundColor: bgColor, opacity }]}>
-      <View style={styles.row}>
-        <View style={styles.dot} />
-        <Text style={styles.label}>{LABEL[status]}</Text>
-        {showSignal && (
-          <>
-            <View style={styles.divider} />
-            <SignalBars bars={BARS[level]} color={sigColor} />
-            <Text style={[styles.gpsLabel, { color: sigColor }]}>GPS</Text>
-          </>
-        )}
-      </View>
+      {routeTitle ? (
+        /* Following a planned route — show title on first row, GPS signal below */
+        <View style={styles.routeTitleWrapper}>
+          <View style={styles.row}>
+            <View style={styles.dot} />
+            <Text style={[styles.label, styles.routeTitle]} numberOfLines={1}>{routeTitle}</Text>
+          </View>
+          {showSignal && (
+            <View style={[styles.row, { justifyContent: 'center', marginTop: 2 }]}>
+              <SignalBars bars={BARS[level]} color={sigColor} />
+              <Text style={[styles.gpsLabel, { color: sigColor }]}>
+                GPS{accuracyMetres != null ? ` ±${Math.round(accuracyMetres)}m` : ''}
+              </Text>
+            </View>
+          )}
+        </View>
+      ) : (
+        <View style={styles.row}>
+          <View style={styles.dot} />
+          <Text style={styles.label}>{LABEL[status]}</Text>
+          {showSignal && (
+            <>
+              <View style={styles.divider} />
+              <SignalBars bars={BARS[level]} color={sigColor} />
+              <Text style={[styles.gpsLabel, { color: sigColor }]}>GPS</Text>
+            </>
+          )}
+        </View>
+      )}
     </Animated.View>
   );
 
@@ -147,6 +167,12 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fontMedium,
     fontSize: Typography.sizes.sm,
     letterSpacing: 0.5,
+  },
+  routeTitleWrapper: {
+    alignItems: 'center',
+  },
+  routeTitle: {
+    maxWidth: 200,
   },
   divider: {
     width: 1,

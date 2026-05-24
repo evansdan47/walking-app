@@ -6,8 +6,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Platform, Pressable, StyleSheet, Text, TextInput, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import MapboxGL from '@rnmapbox/maps';
+
 import { PhotoViewerCarousel } from '@/components/review/photo-viewer-carousel';
 import { ReviewActionBar } from '@/components/review/review-action-bar';
+import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { ReviewTabBar, type TabDef } from '@/components/review/review-tab-bar';
 import { TabElevation } from '@/components/review/tab-elevation';
 import { TabHealthStats } from '@/components/review/tab-health-stats';
@@ -65,11 +68,11 @@ export default function WalkSummaryScreen() {
   const [focusPhotoCoordinate, setFocusPhotoCoordinate] = useState<[number, number] | null>(null);
 
   // ── Shared map integration ─────────────────────────────────────────────
-  // Push route + photos to the always-mounted map in index.tsx instead of
-  // rendering our own MapboxGL.MapView (avoids the cold-start flash).
-  const { setReviewData, setReviewOverlayOptions, clearReviewData } = useReviewRoute();
+  // Signal to index.tsx that review is active (so it restores the correct
+  // sheet when this modal closes). We no longer push route data to the
+  // shared map — the map is rendered locally below so it stays interactive.
+  const { setReviewData, clearReviewData } = useReviewRoute();
 
-  // Mount: push route data; Unmount: clear so the main map returns to live view.
   const onPhotoTap = useCallback(
     (photo: { id: string; longitude: number; latitude: number }) => {
       const idx = photos.findIndex((p) => p.id === photo.id);
@@ -79,39 +82,14 @@ export default function WalkSummaryScreen() {
   );
   useEffect(() => {
     if (route.length === 0) return;
-    // Prime overlay options BEFORE setting review data so ReviewRouteLayer
-    // renders with the correct camera padding from its very first render
-    // (avoids a visible double-fit when the sheet is already open on load).
-    setReviewOverlayOptions({
-      cameraPaddingBottom: screenHeight * 0.75 + 20,
-      cameraPaddingTop: insets.top + 60,
-      showPhotoMarkers: false,
-      focusCoordinate: null,
-      mode: displayMode,
-      colours,
-    });
     setReviewData(route, photos, onPhotoTap);
     return () => { clearReviewData(); };
-    // intentionally omit setReviewData / clearReviewData / setReviewOverlayOptions (stable callbacks)
-    // screenHeight, insets.top, displayMode, colours are stable at mount; the second
-    // effect below keeps them in sync for any subsequent changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, photos, onPhotoTap]);
 
-  // Sync display options whenever camera padding, mode, or tab changes.
-  useEffect(() => {
-    setReviewOverlayOptions({
-      cameraPaddingBottom: sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60,
-      cameraPaddingTop: insets.top + 60,
-      showPhotoMarkers: activeTab === 'photos',
-      focusCoordinate: focusPhotoCoordinate,
-      onPhotoLongPress: (photo: { longitude: number; latitude: number }) =>
-        setFocusPhotoCoordinate([photo.longitude, photo.latitude]),
-      mode: displayMode,
-      colours,
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sheetOpen, screenHeight, insets.bottom, insets.top, activeTab, focusPhotoCoordinate, displayMode, colours]);
+  // Camera padding for the local ReviewRouteLayer — above sheet when open, minimal when closed.
+  const cameraPaddingBottom = sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60;
+  const cameraPaddingTop = insets.top + 60;
 
   // Until Replaying Phase 1 adds followSessionId to the walks table,
   // all walks are treated as free walks and Save Route is always shown.
@@ -166,7 +144,32 @@ export default function WalkSummaryScreen() {
   };
 
   return (
-    <View style={styles.container} pointerEvents="box-none">
+    <View style={styles.container}>
+      {/* Interactive map — rendered locally so gestures (pan/zoom) work even
+          with the BottomSheet sitting on top. The shared map in index.tsx is
+          bypassed for this screen; we still call setReviewData so index.tsx
+          knows review mode is active and can restore the correct sheet on dismiss. */}
+      <MapboxGL.MapView
+        style={StyleSheet.absoluteFill}
+        styleURL={MapboxGL.StyleURL.Outdoors}
+        logoEnabled={false}
+        attributionEnabled={false}
+        compassEnabled={false}
+      >
+        <ReviewRouteLayer
+          points={route}
+          photos={photos}
+          onPhotoTap={onPhotoTap}
+          onPhotoLongPress={(photo) => setFocusPhotoCoordinate([photo.longitude, photo.latitude])}
+          mode={displayMode}
+          colours={colours}
+          showPhotoMarkers={activeTab === 'photos'}
+          cameraPaddingBottom={cameraPaddingBottom}
+          cameraPaddingTop={cameraPaddingTop}
+          focusCoordinate={focusPhotoCoordinate}
+        />
+      </MapboxGL.MapView>
+
       {/* Photo viewer carousel — renders over everything */}
       {selectedPhotoIndex !== null && (
         <PhotoViewerCarousel
@@ -409,7 +412,7 @@ export default function WalkSummaryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: 'transparent' },
+  container: { flex: 1 },
   headerOverlay: {
     position: 'absolute',
     top: 0,

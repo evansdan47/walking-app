@@ -1,22 +1,23 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useAuth, useUser } from '@clerk/expo';
-import { useMutation } from 'convex/react';
+import { Ionicons } from '@expo/vector-icons';
+import { useConvex, useMutation } from 'convex/react';
 import Constants from 'expo-constants';
 import { Pedometer } from 'expo-sensors';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert,
-  Animated,
-  LayoutAnimation,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  TextInput,
-  UIManager,
-  View,
+    Alert,
+    Animated,
+    LayoutAnimation,
+    Platform,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    TextInput,
+    UIManager,
+    View,
 } from 'react-native';
 
+import { DiagnosticsPanel } from '@/components/profile/diagnostics-panel';
 import { AppHeader } from '@/components/shared/app-header';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -28,10 +29,11 @@ import { useLocationPermission } from '@/hooks/use-location-permission';
 import { useRouteColours } from '@/hooks/use-route-colours';
 import { useUserPreferences } from '@/hooks/use-user-preferences';
 import {
-  checkHealthConnectPermissions,
-  isHealthConnectAvailable,
-  requestHealthConnectPermissions,
+    checkHealthConnectPermissions,
+    isHealthConnectAvailable,
+    requestHealthConnectPermissions,
 } from '@/lib/health-connect';
+import { downloadWalksFromCloud } from '@/lib/sync/download-walks';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
@@ -131,6 +133,20 @@ const accStyles = StyleSheet.create({
     paddingTop: Spacing.base,
     paddingBottom: Spacing.base,
     gap: Spacing.md,
+  },
+  actionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.sm,
+    borderWidth: 1,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: 'transparent',
+    marginVertical: Spacing.xs,
   },
 });
 
@@ -259,6 +275,32 @@ export default function ProfileScreen() {
   }, []);
 
   const upsertCurrentUser = useMutation(api.users.upsertCurrentUser);
+  const convex = useConvex();
+  const [syncing, setSyncing] = useState(false);
+
+  const handleSyncFromCloud = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const result = await downloadWalksFromCloud(convex);
+      if (result.downloaded === 0 && result.failed === 0) {
+        Alert.alert('Up to date', 'All cloud walks are already on this device.');
+      } else if (result.failed > 0) {
+        Alert.alert(
+          'Sync complete',
+          `Downloaded ${result.downloaded} walk${result.downloaded !== 1 ? 's' : ''}. ${result.failed} failed — check Diagnostics for details.`,
+        );
+      } else {
+        Alert.alert(
+          'Sync complete',
+          `Downloaded ${result.downloaded} walk${result.downloaded !== 1 ? 's' : ''} from the cloud.`,
+        );
+      }
+    } catch (err) {
+      Alert.alert('Sync failed', 'Could not reach the server. Please check your connection and try again.');
+    } finally {
+      setSyncing(false);
+    }
+  }, [convex]);
 
   useEffect(() => {
     if (!user) return;
@@ -407,9 +449,26 @@ export default function ProfileScreen() {
         {/* ── Developer Settings ── */}
         <Accordion title="Developer Settings" icon="code-slash-outline">
 
+          {/* Down-sync: pull walks from Convex to local device */}
           <ThemedText type="caption" style={{ color: colors.textMuted }}>
-            Adjust the colours used on the route review map. Changes apply next time a walk is opened.
+            Download completed walks from the cloud that are missing on this device.
           </ThemedText>
+          <Pressable
+            style={[
+              accStyles.actionButton,
+              { backgroundColor: colors.primary + '18', borderColor: colors.primary + '40' },
+              syncing && { opacity: 0.5 },
+            ]}
+            onPress={handleSyncFromCloud}
+            disabled={syncing}
+          >
+            <Ionicons name={syncing ? 'sync' : 'cloud-download-outline'} size={16} color={colors.primary} />
+            <ThemedText type="caption" style={{ color: colors.primary, fontWeight: '600' }}>
+              {syncing ? 'Syncing…' : 'Sync from Cloud'}
+            </ThemedText>
+          </Pressable>
+
+          <View style={accStyles.divider} />
 
           <View style={styles.devColourHeader}>
             <ThemedText type="caption" style={{ color: colors.textMuted, flex: 1 }}>Route colours</ThemedText>
@@ -434,6 +493,11 @@ export default function ProfileScreen() {
             onChange={(hex) => setColour('negative', hex)}
           />
 
+        </Accordion>
+
+        {/* ── Diagnostics ── */}
+        <Accordion title="Diagnostics" icon="bug-outline">
+          <DiagnosticsPanel />
         </Accordion>
 
         <View style={styles.spacer} />

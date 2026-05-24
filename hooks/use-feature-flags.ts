@@ -6,16 +6,51 @@ import { setKv } from '@/lib/db/client';
 const STORE_KEY = 'feature_flags_v1';
 export const KV_GPS_MULTIPLIER = 'gps_accuracy_multiplier';
 
+export type HapticImpactLevel = 'light' | 'medium' | 'heavy';
+
 export interface FeatureFlags {
   allowHistoryDuringRecording: boolean;
   gpsAccuracyMultiplier: number;
   forcePedometerSteps: boolean;
+  /** Radius in metres within which the user must be to start (or auto-start) a queued walk. */
+  startProximityThresholdM: number;
+  /** Distance (metres) at which off-route haptic pulsing begins. */
+  hapticOffRouteStartM: number;
+  /** Distance (metres) at which off-route haptic reaches maximum urgency (shortest interval, heaviest impact). */
+  hapticOffRouteMaxM: number;
+  /** Master switch — enables or disables off-route haptic feedback entirely. */
+  hapticOffRouteEnabled: boolean;
+  /** Impact style used when the user is at exactly the start-distance threshold. */
+  hapticMinImpact: HapticImpactLevel;
+  /** Impact style used when the user reaches (or exceeds) the max-distance threshold. */
+  hapticMaxImpact: HapticImpactLevel;
+  /** Pulse interval (ms) when barely off route (at startM). Longest/slowest rate. */
+  hapticSlowIntervalMs: number;
+  /** Pulse interval (ms) when far off route (at maxM). Shortest/fastest rate. */
+  hapticFastIntervalMs: number;
+  /** Enable haptic test mode — uses hapticTestDistanceM instead of real GPS deviation. */
+  hapticTestEnabled: boolean;
+  /** Mocked off-route distance (metres) used when hapticTestEnabled is true. */
+  hapticTestDistanceM: number;
+  /** When true, tapping a route in Explore jumps straight to the detail panel (no highlight-first step). */
+  exploreDirectDetail: boolean;
 }
 
 const DEFAULTS: FeatureFlags = {
   allowHistoryDuringRecording: false,
   gpsAccuracyMultiplier: 1.0,
   forcePedometerSteps: false,
+  startProximityThresholdM: 200,
+  hapticOffRouteStartM: 20,
+  hapticOffRouteMaxM: 75,
+  hapticOffRouteEnabled: true,
+  hapticMinImpact: 'light',
+  hapticMaxImpact: 'heavy',
+  hapticSlowIntervalMs: 2500,
+  hapticFastIntervalMs: 400,
+  hapticTestEnabled: false,
+  hapticTestDistanceM: 40,
+  exploreDirectDetail: false,
 };
 
 function mergeWithDefaults(stored: Partial<FeatureFlags>): FeatureFlags {

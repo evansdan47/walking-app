@@ -3,8 +3,10 @@ import * as Network from 'expo-network';
 import { useEffect } from 'react';
 import { AppState } from 'react-native';
 
-import { processPendingJobs } from '@/lib/sync/sync-manager';
+import { syncOwnRoutes } from '@/lib/explore/sync-engine';
+import { runDisplayPolylineBackfill } from '@/lib/polyline/backfill';
 import { SYNC_RETRY_INTERVAL_MS } from '@/lib/sync/sync-config';
+import { processPendingJobs } from '@/lib/sync/sync-manager';
 
 /**
  * Watches network connectivity and triggers sync whenever the device
@@ -22,6 +24,8 @@ export function useSyncTrigger() {
   useEffect(() => {
     // Attempt on mount in case there are leftover jobs from a previous session.
     void processPendingJobs(convex);
+    void runDisplayPolylineBackfill();
+    void syncOwnRoutes(convex);
 
     // --- Network-state listener ---
     const networkSubscription = Network.addNetworkStateListener((state) => {
@@ -55,6 +59,8 @@ export function useSyncTrigger() {
       if (nextState === 'active') {
         // App returned to foreground — fire immediately then restart the timer.
         void processPendingJobs(convex);
+        void runDisplayPolylineBackfill();
+        void syncOwnRoutes(convex);
         startTimer();
       } else {
         stopTimer();

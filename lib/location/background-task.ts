@@ -5,6 +5,7 @@ import * as TaskManager from 'expo-task-manager';
 import { getKv } from '../db/client';
 import { insertPoint } from '../db/track-points';
 import { getActiveWalkId } from '../db/walks';
+import { appLog } from '../diagnostics/logger';
 import { haversineMetres } from './haversine';
 
 export const BACKGROUND_LOCATION_TASK = 'WALK_LOCATION_TASK';
@@ -23,6 +24,7 @@ TaskManager.defineTask<{ locations: Location.LocationObject[] }>(
   async ({ data, error }) => {
     if (error) {
       console.error('[BackgroundTask] error:', error.message);
+      appLog('error', 'location-bg', 'Background location task error', new Error(error.message));
       return;
     }
 

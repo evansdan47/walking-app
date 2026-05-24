@@ -1,9 +1,9 @@
-import { db } from './client';
 import {
-  SYNC_BACKOFF_BASE_MS,
-  SYNC_BACKOFF_MAX_MS,
-  MAX_SYNC_RETRIES,
+    MAX_SYNC_RETRIES,
+    SYNC_BACKOFF_BASE_MS,
+    SYNC_BACKOFF_MAX_MS,
 } from '@/lib/sync/sync-config';
+import { db } from './client';
 
 export interface SyncJob {
   id: string;
@@ -18,6 +18,12 @@ export interface SyncJob {
   nextAttemptAt: number;
   /** Track points already confirmed uploaded to Convex (checkpoint for resume). */
   uploadedPointCount: number;
+  /** Walk core-data sync progress: updated per phase inside uploadWalk. */
+  coreSyncStatus: 'pending' | 'in_progress' | 'synced';
+  /** Photo upload result: set once the photo phase completes. */
+  photoSyncStatus: 'none' | 'pending' | 'partial' | 'synced' | 'failed';
+  /** Coarse resume checkpoint (1–4 matching the uploadWalk phases). */
+  phase: number;
 }
 
 type SyncJobRow = {
@@ -30,6 +36,9 @@ type SyncJobRow = {
   attempt_count: number;
   next_attempt_at: number;
   uploaded_point_count: number;
+  core_sync_status: string;
+  photo_sync_status: string;
+  phase: number;
 };
 
 function rowToJob(row: SyncJobRow): SyncJob {
@@ -43,6 +52,9 @@ function rowToJob(row: SyncJobRow): SyncJob {
     attemptCount: row.attempt_count ?? 0,
     nextAttemptAt: row.next_attempt_at ?? 0,
     uploadedPointCount: row.uploaded_point_count ?? 0,
+    coreSyncStatus: (row.core_sync_status ?? 'pending') as SyncJob['coreSyncStatus'],
+    photoSyncStatus: (row.photo_sync_status ?? 'none') as SyncJob['photoSyncStatus'],
+    phase: row.phase ?? 1,
   };
 }
 
@@ -144,4 +156,51 @@ export function ensurePendingSyncJob(walkId: string, deviceId: string, newId: st
       deviceId,
     );
   }
+}
+
+// ── Phase-tracking helpers ────────────────────────────────────────────────────
+
+export function updateCoreSyncStatus(id: string, status: SyncJob['coreSyncStatus']): void {
+  db.runSync(`UPDATE sync_jobs SET core_sync_status = ? WHERE id = ?`, status, id);
+}
+
+export function updatePhotoSyncStatus(id: string, status: SyncJob['photoSyncStatus']): void {
+  db.runSync(`UPDATE sync_jobs SET photo_sync_status = ? WHERE id = ?`, status, id);
+}
+
+export function updateJobPhase(id: string, phase: number): void {
+  db.runSync(`UPDATE sync_jobs SET phase = ? WHERE id = ?`, phase, id);
+}
+
+/** Walk-level sync status surfaced to UI (most-recent job per walk). */
+export interface WalkSyncStatus {
+  coreSyncStatus: SyncJob['coreSyncStatus'];
+  photoSyncStatus: SyncJob['photoSyncStatus'];
+}
+
+/**
+ * Returns a map of walkId → WalkSyncStatus for the given walk IDs.
+ * Uses the most-recent sync job for each walk (highest rowid).
+ */
+export function getSyncStatusMap(walkIds: string[]): Map<string, WalkSyncStatus> {
+  if (walkIds.length === 0) return new Map();
+  const placeholders = walkIds.map(() => '?').join(',');
+  const rows = db.getAllSync<{ walk_id: string; core_sync_status: string; photo_sync_status: string }>(
+    `SELECT walk_id, core_sync_status, photo_sync_status
+     FROM sync_jobs
+     WHERE walk_id IN (${placeholders})
+     ORDER BY rowid DESC`,
+    ...walkIds,
+  );
+  const map = new Map<string, WalkSyncStatus>();
+  for (const row of rows) {
+    if (!map.has(row.walk_id)) {
+      // ORDER BY rowid DESC → first occurrence per walk_id is the most recent job.
+      map.set(row.walk_id, {
+        coreSyncStatus: (row.core_sync_status ?? 'pending') as SyncJob['coreSyncStatus'],
+        photoSyncStatus: (row.photo_sync_status ?? 'none') as SyncJob['photoSyncStatus'],
+      });
+    }
+  }
+  return map;
 }

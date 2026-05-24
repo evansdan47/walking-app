@@ -406,4 +406,33 @@ export default defineSchema({
     .index("by_placeId", ["placeId"])
     .index("by_userId", ["userId"])
     .index("by_placeId_and_userId", ["placeId", "userId"]),
+
+  // ------------------------------------------------------------------
+  // Device diagnostic logs
+  //
+  // Submitted manually by the user via the Stats & State debug panel.
+  // Each row is a batch of SQLite app_log entries from one device at one
+  // point in time. userId is stored as tokenIdentifier (optional — kept
+  // even when the user is signed out so anonymous submissions are still
+  // tied to a device).
+  // ------------------------------------------------------------------
+
+  deviceLogs: defineTable({
+    userId: v.optional(v.string()), // tokenIdentifier, null if unauthenticated
+    deviceId: v.string(),
+    appVersion: v.string(),
+    submittedAt: v.number(), // Unix ms
+    entries: v.array(
+      v.object({
+        ts: v.number(),
+        level: v.string(),
+        tag: v.string(),
+        message: v.string(),
+        stack: v.optional(v.string()),
+        context: v.optional(v.string()),
+      }),
+    ),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_submittedAt", ["submittedAt"]),
 });

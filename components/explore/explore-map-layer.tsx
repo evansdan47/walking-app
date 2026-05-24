@@ -14,10 +14,8 @@
  */
 
 import MapboxGL from '@rnmapbox/maps';
-import { useQuery } from 'convex/react';
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 
-import { api } from '@/convex/_generated/api';
 import type { Doc } from '@/convex/_generated/dataModel';
 
 export type PlannedRoute = Doc<'plannedRoutes'>;
@@ -55,7 +53,7 @@ function clusterRadius(zoom: number): number {
   if (zoom < 10) return 30000;
   if (zoom < 11) return 10000;
   if (zoom < 12) return 3000;
-  return 0; // individual pins
+  return 50; // proximity groups — routes within 50 m always cluster together
 }
 
 // ── Greedy single-pass clustering ─────────────────────────────────────────────
@@ -139,67 +137,40 @@ const EMPTY_FC: GeoJSON.FeatureCollection = { type: 'FeatureCollection', feature
 // ── ExploreMapLayer ────────────────────────────────────────────────────────────
 
 interface ExploreMapLayerProps {
+  /** Resolved routes from ExploreSheetContent — shared to avoid a duplicate subscription. */
+  routes: PlannedRoute[];
   viewBounds: ExploreViewBounds | null;
   zoom: number;
-  selectedRoute: PlannedRoute | null;
+  highlightedRoute: PlannedRoute | null;
   onSelectRoute: (route: PlannedRoute) => void;
   onClusterZoom: (lat: number, lng: number, newZoom: number) => void;
+  /** Called when the user taps a proximity group pin (zoom >= 12, routes within 50 m). */
+  onGroupSelect: (routes: PlannedRoute[]) => void;
 }
 
 export function ExploreMapLayer({
+  routes,
   viewBounds,
   zoom,
-  selectedRoute,
+  highlightedRoute,
   onSelectRoute,
   onClusterZoom,
+  onGroupSelect,
 }: ExploreMapLayerProps) {
-  const routes = useQuery(
-    api.planned_routes.listWithinBounds,
-    viewBounds ?? 'skip',
-  ) as PlannedRoute[] | undefined;
-
-  // ── Stabilize against auth-refresh oscillation ────────────────────────────
-  // Convex re-runs queries on JWT refresh and briefly returns [] or a different
-  // (smaller) set when auth context is absent.  We keep the "richest" result:
-  // accept updates only when the new set has MORE routes or the same route IDs.
-  const lastRoutesRef = useRef<PlannedRoute[] | null>(null);
-  const lastRoutesBoundsRef = useRef<ExploreViewBounds | null>(null);
-
-  if (viewBounds !== lastRoutesBoundsRef.current) {
-    lastRoutesBoundsRef.current = viewBounds;
-    lastRoutesRef.current = null; // fresh start for new viewport
-  }
-
-  if (routes !== undefined) {
-    const prev = lastRoutesRef.current;
-    if (prev === null) {
-      lastRoutesRef.current = routes;
-    } else if (routes.length > prev.length) {
-      lastRoutesRef.current = routes;
-    } else if (routes.length === prev.length && routes.length > 0) {
-      const prevIds = new Set(prev.map(r => r._id));
-      if (routes.every(r => prevIds.has(r._id))) {
-        // Same content — keep stable reference, skip update
-      }
-      // else: same count but different IDs → auth oscillation, suppress
-    }
-    // else: fewer routes → auth oscillation, suppress
-  }
-  const knownRoutes = lastRoutesRef.current;
 
   const groups = useMemo(
-    () => buildClusters(knownRoutes ?? [], zoom),
-    [knownRoutes, zoom],
+    () => buildClusters(routes, zoom),
+    [routes, zoom],
   );
 
   const pinsGeoJSON = useMemo(
-    () => buildPinsGeoJSON(groups, selectedRoute?._id ?? null),
-    [groups, selectedRoute],
+    () => buildPinsGeoJSON(groups, highlightedRoute?._id ?? null),
+    [groups, highlightedRoute],
   );
 
   const routeLineGeoJSON = useMemo(
-    () => (selectedRoute ? buildRouteLineGeoJSON(selectedRoute) : EMPTY_FC),
-    [selectedRoute],
+    () => (highlightedRoute ? buildRouteLineGeoJSON(highlightedRoute) : EMPTY_FC),
+    [highlightedRoute],
   );
 
   const handlePinPress = (event: { features?: GeoJSON.Feature[] }) => {
@@ -213,9 +184,14 @@ export function ExploreMapLayer({
     if (!group) return;
 
     if (count > 1) {
-      // Cluster — zoom in to expand it
       const [lng, lat] = (feature.geometry as GeoJSON.Point).coordinates;
-      onClusterZoom(lat ?? 0, lng ?? 0, Math.min(zoom + 2.5, 15));
+      if (zoom >= 12) {
+        // Proximity group (≤ 50 m) — show the grouped walks panel
+        onGroupSelect(group.routes);
+      } else {
+        // Visual cluster at low zoom — zoom in to separate
+        onClusterZoom(lat ?? 0, lng ?? 0, Math.min(zoom + 2.5, 15));
+      }
     } else {
       // Individual pin — select it
       const route = group.routes[0];
@@ -231,8 +207,8 @@ export function ExploreMapLayer({
           id="explore-route-casing"
           style={{
             lineColor: '#ffffff',
-            lineWidth: 7,
-            lineOpacity: 0.7,
+            lineWidth: 6,
+            lineOpacity: 1,
             lineCap: 'round',
             lineJoin: 'round',
           }}
@@ -241,7 +217,7 @@ export function ExploreMapLayer({
           id="explore-route-fill"
           style={{
             lineColor: ['get', 'color'] as unknown as string,
-            lineWidth: 4.5,
+            lineWidth: 3.5,
             lineOpacity: 1,
             lineCap: 'round',
             lineJoin: 'round',
@@ -255,37 +231,17 @@ export function ExploreMapLayer({
         shape={pinsGeoJSON}
         onPress={handlePinPress as any}
       >
-        {/* Outer ring for selected pin */}
-        <MapboxGL.CircleLayer
-          id="explore-pin-selected-ring"
-          filter={['==', ['get', 'isSelected'], 1]}
-          style={{
-            circleRadius: 18,
-            circleColor: 'transparent',
-            circleStrokeWidth: 3,
-            circleStrokeColor: '#007AFF',
-            circleOpacity: 0,
-            circleStrokeOpacity: 0.8,
-          }}
-        />
         {/* Main circle */}
         <MapboxGL.CircleLayer
           id="explore-pin-circle"
           style={{
             circleRadius: [
               'case',
-              ['==', ['get', 'isSelected'], 1],
-              13,
               ['>', ['get', 'count'], 1],
               16,
               10,
             ] as unknown as number,
-            circleColor: [
-              'case',
-              ['==', ['get', 'isSelected'], 1],
-              '#007AFF',
-              ['get', 'color'],
-            ] as unknown as string,
+            circleColor: ['get', 'color'] as unknown as string,
             circleStrokeWidth: 2.5,
             circleStrokeColor: '#ffffff',
             circleOpacity: 0.95,

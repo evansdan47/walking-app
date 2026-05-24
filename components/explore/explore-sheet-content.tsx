@@ -8,24 +8,39 @@
  *  • Route selected     → frosted header (with back) + route summary card
  */
 
-import { BottomSheetScrollView } from '@gorhom/bottom-sheet';
-import { useQuery } from 'convex/react';
+import { useBottomSheet } from '@gorhom/bottom-sheet';
 import { BlurView } from 'expo-blur';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Animated,
-  Platform,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Animated,
+    Platform,
+    ScrollView,
+    type ScrollView as ScrollViewType,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
+    useWindowDimensions,
 } from 'react-native';
+import ReAnimated, {
+    FadeIn,
+    FadeOut,
+    LinearTransition,
+    useAnimatedStyle,
+    useSharedValue,
+} from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
-import { api } from '@/convex/_generated/api';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useExploreData } from '@/hooks/use-explore-data';
+import { useUserPreferences } from '@/hooks/use-user-preferences';
+import {
+    distanceToNearestRoutePointM,
+    distanceToRouteStartM,
+    isCircularRoute,
+} from '@/lib/explore/proximity';
 
 import type { ExploreViewBounds, PlannedRoute } from './explore-map-layer';
 
@@ -62,9 +77,25 @@ function routeDistKm(route: PlannedRoute): number {
   return total;
 }
 
-function fmtDist(km: number): string {
+function fmtDist(km: number, preferMiles = false): string {
   if (km <= 0) return '—';
+  if (preferMiles) return `${(km / 1.60934).toFixed(1)} mi`;
   return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+}
+
+/**
+ * Formats a distance-to-route-start for the list card.
+ * Returns 'Nearby' when within 50 m, otherwise a formatted distance string.
+ */
+function fmtDistToStart(distM: number, preferMiles: boolean): string {
+  if (distM < 50) return 'Nearby';
+  if (preferMiles) {
+    const miles = distM / 1609.34;
+    if (miles < 0.1) return `${Math.round(distM)} m`;
+    return `${miles.toFixed(1)} mi`;
+  }
+  if (distM < 1000) return `${Math.round(distM)} m`;
+  return `${(distM / 1000).toFixed(1)} km`;
 }
 
 /** Estimated walking time using flat 4 km/h + Naismith's rule. */
@@ -104,19 +135,39 @@ function fmtDate(ts: number): string {
 interface RouteListCardProps {
   route: PlannedRoute;
   onPress: () => void;
+  isHighlighted: boolean;
   colors: (typeof Colors)['light'];
+  userLocation: { latitude: number; longitude: number } | null;
 }
 
-function RouteListCard({ route, onPress, colors }: RouteListCardProps) {
+const HIGHLIGHT_COLOR = '#007AFF';
+
+function RouteListCard({ route, onPress, isHighlighted, colors, userLocation }: RouteListCardProps) {
+  const { preferences } = useUserPreferences();
+  const preferMiles = preferences.preferMiles;
   const distKm = routeDistKm(route);
   const elevGainM = route.stats?.elevationGainM ?? 0;
   const diff = difficulty(distKm, elevGainM);
   const timeMins = estimatedTimeMins(distKm, elevGainM);
   const legColor = route.legs[0]?.color ?? '#E65100';
 
+  const isCircular = isCircularRoute(route);
+  const distToStartM = userLocation
+    ? isCircular
+      ? distanceToNearestRoutePointM(userLocation.latitude, userLocation.longitude, route)
+      : distanceToRouteStartM(userLocation.latitude, userLocation.longitude, route)
+    : null;
+
   return (
     <TouchableOpacity
-      style={[styles.listCard, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}
+      style={[
+        styles.listCard,
+        {
+          backgroundColor: isHighlighted ? HIGHLIGHT_COLOR + '12' : colors.backgroundCard,
+          borderColor: isHighlighted ? HIGHLIGHT_COLOR : colors.border,
+          borderWidth: isHighlighted ? 1.5 : StyleSheet.hairlineWidth,
+        },
+      ]}
       onPress={onPress}
       activeOpacity={0.75}
     >
@@ -136,7 +187,7 @@ function RouteListCard({ route, onPress, colors }: RouteListCardProps) {
           <View style={styles.listCardStat}>
             <IconSymbol name="arrow.left.and.right" size={12} color={colors.textMuted} />
             <Text style={[styles.listCardStatText, { color: colors.textMuted }]}>
-              {fmtDist(distKm)}
+              {fmtDist(distKm, preferMiles)}
             </Text>
           </View>
           <View style={styles.listCardStat}>
@@ -153,17 +204,28 @@ function RouteListCard({ route, onPress, colors }: RouteListCardProps) {
           </View>
         </View>
 
+        {distToStartM !== null && (
+          <View style={[styles.listCardStat, { marginTop: 3 }]}>
+            <IconSymbol name="mappin" size={11} color={colors.textMuted} />
+            <Text style={[styles.listCardStatText, { color: colors.textMuted }]}>
+              {(() => {
+                const s = fmtDistToStart(distToStartM, preferMiles);
+                return s === 'Nearby' ? 'Nearby' : `${s} away`;
+              })()}
+            </Text>
+          </View>
+        )}
+
         <View style={styles.listCardMeta}>
-          <Text style={[styles.listCardMetaText, { color: colors.textMuted }]}>
-            {fmtDate(route.createdAt)}
-          </Text>
           <View style={[styles.difficultyBadge, { backgroundColor: diff.color }]}>
             <Text style={styles.difficultyBadgeText}>{diff.label}</Text>
           </View>
         </View>
       </View>
 
-      <IconSymbol name="chevron.right" size={16} color={colors.textMuted} />
+      {isHighlighted && (
+        <IconSymbol name="chevron.right" size={16} color={colors.textMuted} />
+      )}
     </TouchableOpacity>
   );
 }
@@ -173,15 +235,32 @@ function RouteListCard({ route, onPress, colors }: RouteListCardProps) {
 interface RouteSummaryProps {
   route: PlannedRoute;
   colors: (typeof Colors)['light'];
+  userLocation: { latitude: number; longitude: number } | null;
+  proximityThresholdM: number;
   onStartWalk: () => void;
+  onQueueWalk: () => void;
+  onCancelWalk?: () => void;
   onEditRoute: () => void;
+  /** True when this route is already queued for auto-start. */
+  isQueued?: boolean;
 }
 
-function RouteSummary({ route, colors, onStartWalk, onEditRoute }: RouteSummaryProps) {
+function RouteSummary({ route, colors, userLocation, proximityThresholdM, onStartWalk, onQueueWalk, onCancelWalk, onEditRoute, isQueued = false }: RouteSummaryProps) {
+  const { preferences } = useUserPreferences();
+  const preferMiles = preferences.preferMiles;
   const distKm = routeDistKm(route);
   const elevGainM = route.stats?.elevationGainM ?? 0;
   const diff = difficulty(distKm, elevGainM);
   const timeMins = estimatedTimeMins(distKm, elevGainM);
+
+  // Proximity check — whether the user is close enough to start immediately.
+  const isCircular = isCircularRoute(route);
+  const distToStartM = userLocation
+    ? isCircular
+      ? distanceToNearestRoutePointM(userLocation.latitude, userLocation.longitude, route)
+      : distanceToRouteStartM(userLocation.latitude, userLocation.longitude, route)
+    : null;
+  const withinThreshold = distToStartM !== null && distToStartM <= proximityThresholdM;
 
   // Count unique control points across all legs as waypoints
   const waypointCount = route.legs.reduce(
@@ -191,6 +270,62 @@ function RouteSummary({ route, colors, onStartWalk, onEditRoute }: RouteSummaryP
 
   return (
     <View style={{ paddingBottom: Spacing.xl }}>
+      {/* Action buttons — placed at the top so they're immediately accessible */}
+      <View style={[styles.actionsRow, { paddingHorizontal: Spacing.base, paddingTop: Spacing.base }]}>
+        {userLocation === null || withinThreshold ? (
+          <TouchableOpacity
+            style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
+            onPress={onStartWalk}
+            activeOpacity={0.82}
+          >
+            <IconSymbol name="figure.walk" size={18} color="#fff" />
+            <Text style={styles.primaryBtnText}>Start Walk</Text>
+          </TouchableOpacity>
+        ) : isQueued ? (
+          <View style={{ flex: 1, gap: Spacing.xs }}>
+            <TouchableOpacity
+              style={[styles.primaryBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: '#EF4444' }]}
+              onPress={onCancelWalk}
+              activeOpacity={0.82}
+            >
+              <IconSymbol name="xmark.circle" size={18} color="#EF4444" />
+              <Text style={[styles.primaryBtnText, { color: '#EF4444' }]}>Cancel Walk</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={{ flex: 1, gap: Spacing.xs }}>
+            <TouchableOpacity
+              style={[styles.primaryBtn, { backgroundColor: 'transparent', borderWidth: 1.5, borderColor: colors.primary }]}
+              onPress={onQueueWalk}
+              activeOpacity={0.82}
+            >
+              <IconSymbol name="location" size={18} color={colors.primary} />
+              <Text style={[styles.primaryBtnText, { color: colors.primary }]}>Walk When Near</Text>
+            </TouchableOpacity>
+            {distToStartM !== null && (
+              <Text style={[styles.distanceLabel, { color: colors.textMuted }]}>
+                {(() => {
+                  const s = fmtDistToStart(distToStartM, preferMiles);
+                  const label = isCircular ? 'nearest point' : 'start';
+                  return s === 'Nearby' ? `You're at the ${label}` : `${s} from ${label}`;
+                })()}
+              </Text>
+            )}
+          </View>
+        )}
+
+        <TouchableOpacity
+          style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.backgroundCard }]}
+          onPress={onEditRoute}
+          activeOpacity={0.82}
+        >
+          <IconSymbol name="map.fill" size={16} color={colors.text} />
+          <Text style={[styles.secondaryBtnText, { color: colors.text }]}>
+            Edit Route
+          </Text>
+        </TouchableOpacity>
+      </View>
+
       {/* Stats strip */}
       <View
         style={[
@@ -201,7 +336,7 @@ function RouteSummary({ route, colors, onStartWalk, onEditRoute }: RouteSummaryP
         <View style={styles.statCell}>
           <IconSymbol name="arrow.left.and.right" size={18} color={colors.primary} />
           <Text style={[styles.statValue, { color: colors.text }]}>
-            {fmtDist(distKm)}
+            {fmtDist(distKm, preferMiles)}
           </Text>
           <Text style={[styles.statLabel, { color: colors.textMuted }]}>Distance</Text>
         </View>
@@ -296,7 +431,7 @@ function RouteSummary({ route, colors, onStartWalk, onEditRoute }: RouteSummaryP
                   {leg.name}
                 </Text>
                 <Text style={[styles.legDist, { color: colors.textMuted }]}>
-                  {fmtDist(legDistKm)}
+                  {fmtDist(legDistKm, preferMiles)}
                 </Text>
               </View>
             );
@@ -304,28 +439,6 @@ function RouteSummary({ route, colors, onStartWalk, onEditRoute }: RouteSummaryP
         </View>
       )}
 
-      {/* Action buttons */}
-      <View style={[styles.actionsRow, { paddingHorizontal: Spacing.base }]}>
-        <TouchableOpacity
-          style={[styles.primaryBtn, { backgroundColor: colors.primary }]}
-          onPress={onStartWalk}
-          activeOpacity={0.82}
-        >
-          <IconSymbol name="figure.walk" size={18} color="#fff" />
-          <Text style={styles.primaryBtnText}>Start Walk</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.secondaryBtn, { borderColor: colors.border, backgroundColor: colors.backgroundCard }]}
-          onPress={onEditRoute}
-          activeOpacity={0.82}
-        >
-          <IconSymbol name="map.fill" size={16} color={colors.text} />
-          <Text style={[styles.secondaryBtnText, { color: colors.text }]}>
-            Edit Route
-          </Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 }
@@ -392,135 +505,203 @@ function EmptyState({ colors }: { colors: (typeof Colors)['light'] }) {
 
 export interface ExploreSheetContentProps {
   viewBounds: ExploreViewBounds | null;
+  /** Route highlighted in the list + on the map (first tap). */
+  highlightedRoute: PlannedRoute | null;
+  /** Route whose detail panel is shown (second tap). */
   selectedRoute: PlannedRoute | null;
+  /** First tap: highlight the route and fly the camera to it. */
+  onHighlightRoute: (route: PlannedRoute) => void;
+  /** Second tap on the already-highlighted route: show detail panel. */
   onSelectRoute: (route: PlannedRoute) => void;
   onClearRoute: () => void;
   onStartWalk: (route: PlannedRoute) => void;
+  /** Called when the user is outside the proximity threshold and wants to queue the walk. */
+  onQueueWalk: (route: PlannedRoute) => void;
+  /** Called when the user wants to cancel the queued walk. */
+  onCancelWalk?: () => void;
   onEditRoute: (route: PlannedRoute) => void;
+  /** Current GPS position used for proximity-gated start button. */
+  userLocation: { latitude: number; longitude: number } | null;
+  /** Radius in metres for the proximity check. */
+  proximityThresholdM: number;
+  /** True when the currently selected route is already queued for auto-start. */
+  isQueued?: boolean;
+  /**
+   * Called whenever the resolved route list changes. The parent uses this to
+   * pass the same data to ExploreMapLayer so both share a single subscription.
+   */
+  onRoutesChange?: (routes: PlannedRoute[]) => void;
+  /**
+   * When set, the sheet shows only these routes under a "Grouped walks" header.
+   * Cleared by calling onClearGroup (back button).
+   */
+  groupedRoutes?: PlannedRoute[] | null;
+  onClearGroup?: () => void;
+  /**
+   * When true, a single tap on any route card jumps straight to the detail
+   * panel (no two-tap highlight-first flow). Map panning while a route is
+   * selected does not trigger a re-sync of the route list.
+   */
+  directDetail?: boolean;
 }
 
 export function ExploreSheetContent({
   viewBounds,
+  highlightedRoute,
   selectedRoute,
+  onHighlightRoute,
   onSelectRoute,
   onClearRoute,
   onStartWalk,
+  onQueueWalk,
+  onCancelWalk,
   onEditRoute,
+  userLocation,
+  proximityThresholdM,
+  isQueued = false,
+  onRoutesChange,
+  directDetail = false,
+  groupedRoutes,
+  onClearGroup,
 }: ExploreSheetContentProps) {
+  const { preferences: explorePrefs } = useUserPreferences();
+  const explorePrefMiles = explorePrefs.preferMiles;
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const insets = useSafeAreaInsets();
+  const { animatedPosition } = useBottomSheet();
+  const { height: screenHeight } = useWindowDimensions();
+  // Track header height so the scroll area fills the exact remaining space.
+  const headerHeightSV = useSharedValue(60);
+  const scrollRef = useRef<ScrollViewType>(null);
 
-  const routes = useQuery(
-    api.planned_routes.listWithinBounds,
-    viewBounds ?? 'skip',
-  ) as PlannedRoute[] | undefined;
-
-  // ─── Refs (all declared before logic so hook order stays fixed) ──────────────
-  const lastInBoundsRef = useRef<PlannedRoute[] | null>(null);
-  const committedModeRef = useRef<'nearest' | 'inbounds' | null>(null);
-  const committedBoundsRef = useRef<ExploreViewBounds | null>(null);
-  const lastNearestRef = useRef<PlannedRoute[] | null>(null);
-
-  // ─── Bounds change: reset all per-viewport state ─────────────────────────────
-  // committedBoundsRef tracks the viewBounds object reference.  A new reference
-  // only appears when index.tsx creates a new bounds object (i.e. the debounce
-  // fired with a meaningfully different viewport).  On each reset we start fresh
-  // so the new area gets its own initial-load state.
-  if (viewBounds !== committedBoundsRef.current) {
-    committedBoundsRef.current = viewBounds;
-    committedModeRef.current = null;
-    lastInBoundsRef.current = null;  // fresh start for new area
-    lastNearestRef.current = null;   // fresh start for new area
-  }
-
-  // ─── Update lastInBoundsRef ───────────────────────────────────────────────────
-  // KEY FIX: only replace existing data with an empty result on first load.
-  // Convex re-runs queries when the auth token refreshes and briefly returns []
-  // while the server has no auth context.  Ignoring those transient empties
-  // prevents the flip-flop between "list" and "empty state" at ~400 ms.
-  if (routes !== undefined) {
-    const prevInBounds = lastInBoundsRef.current;
-    if (prevInBounds === null) {
-      lastInBoundsRef.current = routes;
-    } else if (routes.length > prevInBounds.length) {
-      lastInBoundsRef.current = routes;
-    } else if (routes.length === prevInBounds.length && routes.length > 0) {
-      const prevIds = new Set(prevInBounds.map(r => r._id));
-      if (routes.every(r => prevIds.has(r._id))) {
-        // Same content — keep stable reference
-      }
-      // else: same count different IDs — auth oscillation, skip
+  // In directDetail mode, freeze the viewBounds when a route is selected so
+  // that map panning doesn't cause the route list to resync/refetch.
+  const frozenBoundsRef = useRef<ExploreViewBounds | null>(null);
+  useEffect(() => {
+    if (!selectedRoute) {
+      frozenBoundsRef.current = null;
     }
-    // else: fewer routes — auth oscillation, skip
-    if (committedModeRef.current !== 'inbounds') {
-      committedModeRef.current = (lastInBoundsRef.current?.length ?? 0) >= 5 ? 'inbounds' : 'nearest';
+  }, [selectedRoute]);
+  const effectiveBounds = (directDetail && selectedRoute && frozenBoundsRef.current)
+    ? frozenBoundsRef.current
+    : viewBounds;
+
+  // ── Immediate skeleton feedback when a route is highlighted ─────────────────
+  // restLoadingPendingId is set synchronously (during render) the moment
+  // highlightedRoute changes, so the rest of the list turns to skeletons
+  // immediately — before the 700 ms viewport-debounce fires.  It is cleared
+  // when routes updates from SQLite (instant after the bounds debounce fires)
+  // or after a 1500 ms timeout as a safety net.
+  const [restLoadingPendingId, setRestLoadingPendingId] = useState<string | null>(null);
+  const restLoadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track the highlight ID we last REACTED to, so the sync-during-render block
+  // only fires when the highlight actually changes — not on every render where
+  // restLoadingPendingId happens to differ (e.g. after the timeout clears it).
+  const prevHighlightIdRef = useRef<string | null>(null);
+
+  const currentHighlightId = highlightedRoute?._id ?? null;
+  if (currentHighlightId !== prevHighlightIdRef.current) {
+    prevHighlightIdRef.current = currentHighlightId;
+    if (currentHighlightId !== null) {
+      setRestLoadingPendingId(currentHighlightId);
+    } else {
+      setRestLoadingPendingId(null);
     }
   }
+  const scrollAreaStyle = useAnimatedStyle(() => {
+    // animatedPosition: Y position of sheet top from screen top (0 = full screen, screenHeight = closed)
+    const HANDLE_HEIGHT = 24; // @gorhom default handle container height
+    const scrollH = Math.max(0, screenHeight - animatedPosition.value - HANDLE_HEIGHT - headerHeightSV.value);
+    return { height: scrollH };
+  });
 
-  const knownRoutes = lastInBoundsRef.current; // null = first load for these bounds
-
-  // ─── Sticky committed-mode ────────────────────────────────────────────────────
-  // useNearestFallback is false only when committed to 'inbounds'.
-  // Resets to null (→ true) when viewBounds changes above.
-  const useNearestFallback = committedModeRef.current !== 'inbounds' && viewBounds !== null;
-
-  // Centre of the current viewport — used for nearest-fallback query
-  const viewCenter = viewBounds
-    ? {
-        centerLat: (viewBounds.minLat + viewBounds.maxLat) / 2,
-        centerLng: (viewBounds.minLng + viewBounds.maxLng) / 2,
-        limit: 5,
-      }
-    : null;
-
-  const nearestRoutes = useQuery(
-    api.planned_routes.listNearest,
-    useNearestFallback && viewCenter ? viewCenter : 'skip',
-  ) as PlannedRoute[] | undefined;
-
-  // ─── Update lastNearestRef (ID-comparison stabilization) ──────────────────────
-  if (nearestRoutes !== undefined) {
-    const prevNearest = lastNearestRef.current;
-    if (prevNearest === null) {
-      lastNearestRef.current = nearestRoutes;
-    } else if (nearestRoutes.length > prevNearest.length) {
-      lastNearestRef.current = nearestRoutes;
-    } else if (nearestRoutes.length === prevNearest.length && nearestRoutes.length > 0) {
-      const prevIds = new Set(prevNearest.map(r => r._id));
-      if (nearestRoutes.every(r => prevIds.has(r._id))) {
-        // Same content — keep stable reference
-      }
-      // else: same count different IDs — auth oscillation, skip
+  // Scroll to top whenever the highlighted route changes so the pinned card is visible.
+  useEffect(() => {
+    if (highlightedRoute) {
+      scrollRef.current?.scrollTo({ y: 0, animated: true });
     }
-    // else: fewer routes — auth oscillation, skip
-  }
-  const knownNearest = lastNearestRef.current;
+  }, [highlightedRoute]);
 
-  // Show the small header spinner while either query is in-flight.
-  // We deliberately do NOT replace the list with a big spinner on re-fetches —
-  // that is what caused the visible flip-flop.
-  const isFetching =
-    (routes === undefined && viewBounds !== null) ||
-    (useNearestFallback && nearestRoutes === undefined && viewCenter !== null);
+  // ── Route data from local SQLite cache (populated by background sync) ────────
+  // In directDetail mode effectiveBounds is frozen while a route is selected,
+  // preventing map panning from triggering a list resync.
+  const { routes, isSyncing } = useExploreData(effectiveBounds);
 
-  // Full-screen loading only on the very first open (no data at all yet).
-  const isInitialLoad = isFetching && (useNearestFallback ? knownNearest === null : knownRoutes === null);
+  // Safety-net: clear skeleton after 1500ms if SQLite update hasn't done it.
+  useEffect(() => {
+    if (restLoadingPendingId === null) {
+      if (restLoadingTimerRef.current) {
+        clearTimeout(restLoadingTimerRef.current);
+        restLoadingTimerRef.current = null;
+      }
+      return;
+    }
+    restLoadingTimerRef.current = setTimeout(() => {
+      restLoadingTimerRef.current = null;
+      setRestLoadingPendingId(null);
+    }, 1500);
+    return () => {
+      if (restLoadingTimerRef.current) {
+        clearTimeout(restLoadingTimerRef.current);
+        restLoadingTimerRef.current = null;
+      }
+    };
+  }, [restLoadingPendingId]);
 
-  // Which list to render
-  const displayRoutes: PlannedRoute[] = useMemo(() => {
-    if (useNearestFallback) return knownNearest ?? [];
-    return knownRoutes ? [...knownRoutes].sort((a, b) => b.createdAt - a.createdAt) : [];
-  }, [useNearestFallback, knownNearest, knownRoutes]);
+  // Clear rest-loading skeleton once SQLite returns updated routes for the new bounds.
+  useEffect(() => {
+    setRestLoadingPendingId(prev => (prev !== null ? null : prev));
+  }, [routes]);
 
-  const title = selectedRoute ? selectedRoute.title : 'Explore';
+  // Full skeleton only on first open when cache is empty and sync is in flight.
+  const isInitialLoad = isSyncing && routes.length === 0 && !highlightedRoute;
+
+  // Sort newest-first for consistent display order.
+  const displayRoutes: PlannedRoute[] = useMemo(
+    () => [...routes].sort((a, b) => b.createdAt - a.createdAt),
+    [routes],
+  );
+
+  // Propagate resolved routes to parent so ExploreMapLayer can share the data
+  // without running its own independent Convex subscription.
+  useEffect(() => {
+    onRoutesChange?.(displayRoutes);
+  }, [displayRoutes, onRoutesChange]);
+
+  // Full route list — highlighted card always sorted first so Reanimated can
+  // animate it from its original position to the top when tapped.
+  const sortedRoutes = useMemo(
+    () =>
+      highlightedRoute
+        ? [highlightedRoute, ...displayRoutes.filter(r => r._id !== highlightedRoute._id)]
+        : displayRoutes,
+    [displayRoutes, highlightedRoute],
+  );
+
+  const isGroupView = !!groupedRoutes && !selectedRoute;
+
+  const title = selectedRoute ? selectedRoute.title : isGroupView ? 'Grouped walks' : 'Explore';
+
+  // Show distance to start beneath the route title whenever a route is selected.
+  const routeDistanceSubtitle = useMemo(() => {
+    if (!selectedRoute || !userLocation) return null;
+    const circular = isCircularRoute(selectedRoute);
+    const distM = circular
+      ? distanceToNearestRoutePointM(userLocation.latitude, userLocation.longitude, selectedRoute)
+      : distanceToRouteStartM(userLocation.latitude, userLocation.longitude, selectedRoute);
+    const label = circular ? 'nearest point' : 'start';
+    const dist = fmtDistToStart(distM, explorePrefMiles);
+    return dist === 'Nearby' ? `At the ${label}` : `${dist} from ${label}`;
+  }, [selectedRoute, userLocation, explorePrefMiles]);
+
   const subtitle = selectedRoute
-    ? null
-    : useNearestFallback && knownNearest !== null
-    ? `${knownNearest.length} nearest route${knownNearest.length !== 1 ? 's' : ''} to this area`
-    : knownRoutes !== null
-    ? `${knownRoutes.length} route${knownRoutes.length !== 1 ? 's' : ''} in view`
-    : isFetching
+    ? routeDistanceSubtitle
+    : isGroupView
+    ? `${groupedRoutes!.length} route${groupedRoutes!.length !== 1 ? 's' : ''} in group`
+    : routes.length > 0
+    ? `${routes.length} route${routes.length !== 1 ? 's' : ''} in view`
+    : isSyncing
     ? 'Loading routes…'
     : null;
 
@@ -531,6 +712,7 @@ export function ExploreSheetContent({
         intensity={Platform.OS === 'ios' ? 80 : 0}
         tint={scheme === 'dark' ? 'dark' : 'light'}
         style={[styles.header, { borderBottomColor: colors.border }]}
+        onLayout={(e) => { headerHeightSV.value = e.nativeEvent.layout.height; }}
       >
         {Platform.OS === 'android' && (
           <View
@@ -541,11 +723,11 @@ export function ExploreSheetContent({
           />
         )}
 
-        {/* Back arrow when a route is selected */}
-        {selectedRoute ? (
+        {/* Back arrow when a route is selected or viewing a proximity group */}
+        {selectedRoute || isGroupView ? (
           <TouchableOpacity
             style={styles.headerBack}
-            onPress={onClearRoute}
+            onPress={selectedRoute ? onClearRoute : onClearGroup}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
             <IconSymbol name="arrow.left" size={20} color={colors.text} />
@@ -571,42 +753,112 @@ export function ExploreSheetContent({
         <View style={styles.headerRight} />
       </BlurView>
 
-      {/* Scrollable content */}
-      <BottomSheetScrollView
-        style={{ backgroundColor: colors.backgroundCard }}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingBottom: 60 + insets.bottom + Spacing.lg },
-        ]}
-      >
-        {selectedRoute ? (
-          <RouteSummary
-            route={selectedRoute}
-            colors={colors}
-            onStartWalk={() => onStartWalk(selectedRoute)}
-            onEditRoute={() => onEditRoute(selectedRoute)}
-          />
-        ) : !viewBounds ? (
-          <EmptyState colors={colors} />
-        ) : isInitialLoad ? (
-          <View style={{ paddingTop: Spacing.sm }}>
-            {[0, 1, 2, 3].map(i => <SkeletonCard key={i} colors={colors} />)}
-          </View>
-        ) : displayRoutes.length === 0 ? (
-          <EmptyState colors={colors} />
-        ) : (
-          <View style={{ paddingTop: Spacing.sm }}>
-            {displayRoutes.map((route) => (
-              <RouteListCard
-                key={route._id}
-                route={route}
-                colors={colors}
-                onPress={() => onSelectRoute(route)}
-              />
-            ))}
-          </View>
-        )}
-      </BottomSheetScrollView>
+      {/* Scrollable content — height driven by animatedPosition so the ScrollView
+          is always bounded to the visible sheet area regardless of snap position. */}
+      <ReAnimated.View style={[scrollAreaStyle, { overflow: 'hidden' }]}>
+        <ScrollView
+          ref={scrollRef}
+          style={{ flex: 1, backgroundColor: colors.backgroundCard }}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { paddingBottom: 60 + insets.bottom + Spacing.lg },
+          ]}
+          showsVerticalScrollIndicator
+          nestedScrollEnabled
+        >
+          {selectedRoute ? (
+            <RouteSummary
+              route={selectedRoute}
+              colors={colors}
+              userLocation={userLocation}
+              proximityThresholdM={proximityThresholdM}
+              isQueued={isQueued}
+              onStartWalk={() => onStartWalk(selectedRoute)}
+              onQueueWalk={() => onQueueWalk(selectedRoute)}
+              onCancelWalk={onCancelWalk}
+              onEditRoute={() => onEditRoute(selectedRoute)}
+            />
+          ) : isGroupView ? (
+            // Proximity group view — same card list but filtered to the group only
+            <View style={{ paddingTop: Spacing.sm }}>
+              {groupedRoutes!.map((route) => (
+                <RouteListCard
+                  key={route._id}
+                  route={route}
+                  colors={colors}
+                  isHighlighted={false}
+                  userLocation={userLocation}
+                  onPress={() => {
+                    onHighlightRoute(route);
+                    onSelectRoute(route);
+                  }}
+                />
+              ))}
+            </View>
+          ) : !viewBounds ? (
+            <EmptyState colors={colors} />
+          ) : isInitialLoad && !highlightedRoute ? (
+            // Very first open with no selection yet — full skeleton list
+            <View style={{ paddingTop: Spacing.sm }}>
+              {[0, 1, 2, 3].map(i => <SkeletonCard key={i} colors={colors} />)}
+            </View>
+          ) : (
+            // List view — highlighted route is always pinned at the top.
+            // While the viewport query re-runs (camera flew to the route),
+            // show skeleton cards in the "rest" slot so the list doesn’t
+            // jump or reorder under the user’s finger.
+            <View style={{ paddingTop: Spacing.sm }}>
+              {sortedRoutes.map((route) => {
+                // While re-querying the viewport, only keep the highlighted card
+                // alive — non-highlighted cards unmount with a fade-out exit.
+                if (restLoadingPendingId !== null && route._id !== highlightedRoute?._id) {
+                  return null;
+                }
+                return (
+                  <ReAnimated.View
+                    key={route._id}
+                    layout={LinearTransition.springify().damping(20).stiffness(200)}
+                    exiting={FadeOut.duration(150)}
+                  >
+                    <RouteListCard
+                      route={route}
+                      colors={colors}
+                      isHighlighted={route._id === highlightedRoute?._id}
+                      userLocation={userLocation}
+                      onPress={() => {
+                        if (directDetail) {
+                          // Snapshot bounds before selection so map panning
+                          // doesn't trigger a list resync while detail is open.
+                          frozenBoundsRef.current = viewBounds;
+                          onHighlightRoute(route);
+                          onSelectRoute(route);
+                        } else if (route._id === highlightedRoute?._id) {
+                          onSelectRoute(route);
+                        } else {
+                          onHighlightRoute(route);
+                        }
+                      }}
+                    />
+                  </ReAnimated.View>
+                );
+              })}
+              {/* Skeleton cards fade in below the highlighted card while the
+                  viewport debounce re-queries for the new camera position. */}
+              {restLoadingPendingId !== null && (
+                <ReAnimated.View
+                  entering={FadeIn.duration(200)}
+                  exiting={FadeOut.duration(150)}
+                >
+                  {[0, 1, 2].map(i => <SkeletonCard key={i} colors={colors} />)}
+                </ReAnimated.View>
+              )}
+              {sortedRoutes.length === 0 && restLoadingPendingId === null && (
+                <EmptyState colors={colors} />
+              )}
+            </View>
+          )}
+        </ScrollView>
+      </ReAnimated.View>
     </View>
   );
 }
@@ -811,6 +1063,7 @@ const styles = StyleSheet.create({
   // Action buttons
   actionsRow: {
     flexDirection: 'row',
+    alignItems: 'flex-start',
     gap: Spacing.sm,
     paddingTop: Spacing.base,
   },
@@ -841,6 +1094,12 @@ const styles = StyleSheet.create({
   secondaryBtnText: {
     fontSize: 15,
     fontFamily: Typography.fontMedium,
+  },
+  distanceLabel: {
+    fontSize: Typography.sizes.xs,
+    fontFamily: Typography.fontRegular,
+    textAlign: 'center',
+    marginTop: -4,
   },
 
   // Skeleton

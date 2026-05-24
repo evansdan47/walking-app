@@ -86,61 +86,28 @@ export const listForCurrentUser = query({
 });
 
 /**
- * Return all planned routes visible within the given map viewport bounds.
- *
- * Visibility rules:
- *   - "public" routes are returned to everyone.
- *   - Legacy rows with no `visibility` field are treated as "public" for
- *     back-compat.
- *   - The authenticated user's own routes are always included (so they can
- *     see their private walks on the map while logged in).
- *   - "private" routes belonging to other users are excluded.
- *   - "shared" is reserved for future group-based sharing; currently treated
- *     the same as "private" (only owner sees it).
+ * List the authenticated user's public planned routes.
+ * Used by the mobile Explore sync engine to ensure own public routes always
+ * appear in the local SQLite cache, regardless of which region is currently
+ * on-screen. Returns an empty array when the caller is unauthenticated.
  */
-export const listWithinBounds = query({
-  args: {
-    minLat: v.number(),
-    maxLat: v.number(),
-    minLng: v.number(),
-    maxLng: v.number(),
-  },
-  handler: async (ctx, { minLat, maxLat, minLng, maxLng }) => {
-    // Resolve the calling user (may be unauthenticated)
+export const listOwnPublic = query({
+  args: {},
+  handler: async (ctx) => {
     const identity = await ctx.auth.getUserIdentity();
-    let currentUserId: string | null = null;
-    if (identity) {
-      const user = await ctx.db
-        .query('users')
-        .withIndex('by_tokenIdentifier', (q) =>
-          q.eq('tokenIdentifier', identity.tokenIdentifier),
-        )
-        .unique();
-      currentUserId = user?._id ?? null;
-    }
-
-    const all = await ctx.db.query('plannedRoutes').collect();
-
-    return all.filter((route) => {
-      // Visibility gate: public (or legacy null) is open to all; private/shared
-      // only visible to the owner.
-      const vis = route.visibility ?? 'public';
-      const isOwner = currentUserId !== null && route.userId === currentUserId;
-      if (vis !== 'public' && !isOwner) return false;
-
-      // Spatial filter: at least one point must fall within the viewport.
-      for (const leg of route.legs) {
-        for (const pt of leg.points) {
-          if (
-            pt.lat >= minLat && pt.lat <= maxLat &&
-            pt.lng >= minLng && pt.lng <= maxLng
-          ) {
-            return true;
-          }
-        }
-      }
-      return false;
-    });
+    if (!identity) return [];
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+    const all = await ctx.db
+      .query('plannedRoutes')
+      .withIndex('by_userId_and_createdAt', (q) => q.eq('userId', user._id))
+      .collect();
+    return all.filter((r) => (r.visibility ?? 'public') === 'public');
   },
 });
 
@@ -204,70 +171,6 @@ export const listWithinBoundsWithAuthors = query({
       // Lets the client show Edit button without a separate auth query
       isOwner: currentUserId !== null && route.userId === currentUserId,
     }));
-  },
-});
-
-/**
- * Return up to `limit` planned routes whose centroid is nearest to the given
- * centre coordinate, applying the same visibility rules as listWithinBounds.
- *
- * Used by the Explore sheet to show fallback results when the current viewport
- * contains fewer than 5 routes.
- */
-export const listNearest = query({
-  args: {
-    centerLat: v.number(),
-    centerLng: v.number(),
-    limit: v.number(),
-  },
-  handler: async (ctx, { centerLat, centerLng, limit }) => {
-    const identity = await ctx.auth.getUserIdentity();
-    let currentUserId: string | null = null;
-    if (identity) {
-      const user = await ctx.db
-        .query('users')
-        .withIndex('by_tokenIdentifier', (q) =>
-          q.eq('tokenIdentifier', identity.tokenIdentifier),
-        )
-        .unique();
-      currentUserId = user?._id ?? null;
-    }
-
-    const all = await ctx.db.query('plannedRoutes').collect();
-
-    // Apply the same visibility gate as listWithinBounds
-    const visible = all.filter((route) => {
-      const vis = route.visibility ?? 'public';
-      const isOwner = currentUserId !== null && route.userId === currentUserId;
-      return vis === 'public' || isOwner;
-    });
-
-    // Compute the distance from each route's bounding-box centre to the map centre
-    const R = 6371;
-    const withDist = visible.map((route) => {
-      const allPts = route.legs.flatMap((l) => l.points);
-      if (allPts.length === 0) return { route, distKm: Infinity };
-      let minLat = allPts[0]!.lat, maxLat = allPts[0]!.lat;
-      let minLng = allPts[0]!.lng, maxLng = allPts[0]!.lng;
-      for (const pt of allPts) {
-        if (pt.lat < minLat) minLat = pt.lat;
-        if (pt.lat > maxLat) maxLat = pt.lat;
-        if (pt.lng < minLng) minLng = pt.lng;
-        if (pt.lng > maxLng) maxLng = pt.lng;
-      }
-      const rLat = (minLat + maxLat) / 2;
-      const rLng = (minLng + maxLng) / 2;
-      const φ1 = (centerLat * Math.PI) / 180;
-      const φ2 = (rLat * Math.PI) / 180;
-      const dφ = ((rLat - centerLat) * Math.PI) / 180;
-      const dλ = ((rLng - centerLng) * Math.PI) / 180;
-      const a = Math.sin(dφ / 2) ** 2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(dλ / 2) ** 2;
-      const distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return { route, distKm };
-    });
-
-    withDist.sort((a, b) => a.distKm - b.distKm);
-    return withDist.slice(0, limit).map((x) => x.route);
   },
 });
 

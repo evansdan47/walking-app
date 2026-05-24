@@ -1,13 +1,14 @@
+import { useWalkSessionContext } from '@/contexts/walk-session-context';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
 import { getUnsyncedPointsForWalk, markPointsSynced } from '@/lib/db/track-points';
 import { getWalk, updateWalkConvexId } from '@/lib/db/walks';
+import { appLog } from '@/lib/diagnostics/logger';
 import { LIVE_SYNC_INTERVAL_MS, SYNC_BATCH_SIZE } from '@/lib/sync/sync-config';
 import { useConvex } from 'convex/react';
 import * as Network from 'expo-network';
 import { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
-import { useWalkSessionContext } from '@/contexts/walk-session-context';
 
 /**
  * Provides real-time dual-write for Live Broadcast walks.
@@ -101,6 +102,7 @@ export function useLiveWalkSync() {
       } catch (err) {
         // Non-fatal — next tick will pick up the gap.
         console.warn('[live-sync] flush failed, will retry:', err instanceof Error ? err.message : err);
+        appLog('warn', 'live-sync', 'Live sync flush failed — will retry next tick', err);
       }
     };
 

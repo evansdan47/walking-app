@@ -2,6 +2,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { randomUUID } from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
+import * as MediaLibrary from 'expo-media-library';
 import { useRef, useState } from 'react';
 import {
     Modal,
@@ -29,6 +30,7 @@ export function PhotoButton({ walkId, currentLocation, disabled = false }: Photo
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const [permission, requestPermission] = useCameraPermissions();
+  const [mediaPermission] = MediaLibrary.usePermissions();
   const cameraRef = useRef<CameraView | null>(null);
 
   async function handleCapture() {
@@ -46,6 +48,10 @@ export function PhotoButton({ walkId, currentLocation, disabled = false }: Photo
     );
     await FileSystem.moveAsync({ from: photo.uri, to: destUri });
 
+    if (mediaPermission?.granted) {
+      MediaLibrary.saveToLibraryAsync(destUri).catch(() => {});
+    }
+
     insertPhoto({
       id: randomUUID(),
       walkId,
@@ -53,7 +59,7 @@ export function PhotoButton({ walkId, currentLocation, disabled = false }: Photo
       latitude: currentLocation?.latitude ?? 0,
       longitude: currentLocation?.longitude ?? 0,
       heading: pos?.coords.heading ?? null,
-      localUri: destUri,
+      localAssetUri: destUri,
       caption: null,
     });
   }
@@ -99,6 +105,7 @@ export function PhotoFab({
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const [permission, requestPermission] = useCameraPermissions();
+  const [mediaPermission, requestMediaPermission] = MediaLibrary.usePermissions();
   const [cameraOpen, setCameraOpen] = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
 
@@ -117,6 +124,10 @@ export function PhotoFab({
     );
     await FileSystem.moveAsync({ from: photo.uri, to: destUri });
 
+    if (mediaPermission?.granted) {
+      MediaLibrary.saveToLibraryAsync(destUri).catch(() => {});
+    }
+
     insertPhoto({
       id: randomUUID(),
       walkId,
@@ -124,7 +135,7 @@ export function PhotoFab({
       latitude: currentLocation?.latitude ?? 0,
       longitude: currentLocation?.longitude ?? 0,
       heading: pos?.coords.heading ?? null,
-      localUri: destUri,
+      localAssetUri: destUri,
       caption: null,
     });
 
@@ -134,9 +145,14 @@ export function PhotoFab({
   function handlePress() {
     if (!permission?.granted) {
       void requestPermission();
-    } else {
-      setCameraOpen(true);
+      return;
     }
+    // Request media library permission in the background if not yet determined.
+    // Camera opens regardless — saving to the gallery is best-effort.
+    if (!mediaPermission?.granted && mediaPermission?.canAskAgain) {
+      void requestMediaPermission();
+    }
+    setCameraOpen(true);
   }
 
   return (
