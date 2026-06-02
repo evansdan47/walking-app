@@ -35,6 +35,8 @@ const MAPPING = {
   'map.fill': 'map',
   'location.fill': 'location-on',
   'scope': 'my-location',
+  'cube': 'view-in-ar',
+  'info.circle': 'info',
   // ── Metric / stat icons ────────────────────────────────────────────────
   'arrow.left.and.right': 'straighten',           // distance
   'clock': 'timer',                               // duration / elapsed time

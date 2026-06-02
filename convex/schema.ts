@@ -12,6 +12,12 @@ export default defineSchema({
     weightKg: v.optional(v.number()),
     /** Set via the Convex dashboard to grant admin privileges. */
     isAdmin: v.optional(v.boolean()),
+    /** 3D map view — 45° isometric pitch. */
+    map3d: v.optional(v.boolean()),
+    /** Compass needle overlay in the map button strip. */
+    mapCompass: v.optional(v.boolean()),
+    /** Floating location info panel (lat/lng, OS grid ref, postcode). */
+    mapLocationInfo: v.optional(v.boolean()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   /**
@@ -434,5 +440,42 @@ export default defineSchema({
     ),
   })
     .index("by_userId", ["userId"])
+    .index("by_submittedAt", ["submittedAt"]),
+
+  // ------------------------------------------------------------------
+  // Waitlist / closed-beta interest registrations
+  //
+  // Submitted via the public waitlist page before account creation.
+  // All questionnaire fields are optional — only name + email required.
+  // ------------------------------------------------------------------
+
+  waitlist: defineTable({
+    name: v.string(),
+    email: v.string(), // lower-cased before insert
+
+    // Q1: How often do you go walking or hiking?
+    walkingFrequency: v.optional(v.string()),
+
+    // Q2: What type of walking do you do most often? (multi-select)
+    walkingTypes: v.optional(v.array(v.string())),
+
+    // Q3: Which apps / tools do you currently use? (multi-select)
+    appsUsed: v.optional(v.array(v.string())),
+
+    // Q4: What do you mainly use walking apps for? (up to 3, multi-select)
+    mainUses: v.optional(v.array(v.string())),
+
+    // Q5: What frustrates you most about current walking apps? (multi-select)
+    frustrations: v.optional(v.array(v.string())),
+
+    // Q6: Would you be interested in helping test new features?
+    testingInterest: v.optional(v.string()),
+
+    // Bonus: What device do you normally walk with? (multi-select)
+    deviceTypes: v.optional(v.array(v.string())),
+
+    submittedAt: v.number(), // Unix ms
+  })
+    .index("by_email", ["email"])
     .index("by_submittedAt", ["submittedAt"]),
 });

@@ -63,6 +63,61 @@ export const getCurrentUser = query({
 });
 
 /**
+ * Returns the current user's map feature flags, or null if not authenticated.
+ */
+export const getMapFeatureFlags = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) return null;
+
+    return {
+      map3d: user.map3d ?? false,
+      mapCompass: user.mapCompass ?? false,
+      mapLocationInfo: user.mapLocationInfo ?? false,
+    };
+  },
+});
+
+/**
+ * Sets one or more of the current user's map feature flags.
+ * Only supplied fields are updated; omitted fields retain their existing values.
+ */
+export const setMapFeatureFlags = mutation({
+  args: {
+    map3d: v.optional(v.boolean()),
+    mapCompass: v.optional(v.boolean()),
+    mapLocationInfo: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier)
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    await ctx.db.patch(user._id, {
+      ...(args.map3d !== undefined ? { map3d: args.map3d } : {}),
+      ...(args.mapCompass !== undefined ? { mapCompass: args.mapCompass } : {}),
+      ...(args.mapLocationInfo !== undefined ? { mapLocationInfo: args.mapLocationInfo } : {}),
+    });
+  },
+});
+
+/**
  * Updates the current user's profile fields (name, weightKg).
  */
 export const updateProfile = mutation({

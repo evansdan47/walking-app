@@ -8,6 +8,7 @@ import { useQueuedWalk } from '@/contexts/queued-walk-context';
 import { useWalkSessionContext } from '@/contexts/walk-session-context';
 import { api } from '@/convex/_generated/api';
 import { type FeatureFlags } from '@/hooks/use-feature-flags';
+import { useMapFeatures } from '@/hooks/use-map-features';
 import { type DbDebugStats, getDbDebugStats } from '@/lib/db/debug-stats';
 import { type AppLogEntry, clearLogs, getLogs } from '@/lib/diagnostics/logger';
 
@@ -70,6 +71,7 @@ function StatRow({
 export function DebugStatsPanel({ flags, colors }: Props) {
   const { state: session } = useWalkSessionContext();
   const { queuedWalk } = useQueuedWalk();
+  const { mapFeatures } = useMapFeatures();
   const [dbStats, setDbStats] = useState<DbDebugStats | null>(null);
   const [logs, setLogs] = useState<AppLogEntry[]>([]);
   const [loading, setLoading] = useState(false);
@@ -169,6 +171,14 @@ export function DebugStatsPanel({ flags, colors }: Props) {
         {(Object.entries(flags) as [string, unknown][]).map(([key, val]) => (
           <StatRow key={key} label={key} value={String(val)} colors={colors} />
         ))}
+      </View>
+
+      {/* ── Map Features (Convex-backed) ── */}
+      <SectionHeader title="Map Features" colors={colors} />
+      <View style={[styles.card, { backgroundColor: colors.backgroundCard, borderColor: colors.border }]}>
+        <StatRow label="map3d" value={mapFeatures.map3d ? 'enabled' : 'disabled'} colors={colors} accent />
+        <StatRow label="mapCompass" value={mapFeatures.mapCompass ? 'enabled' : 'disabled'} colors={colors} />
+        <StatRow label="mapLocationInfo" value={mapFeatures.mapLocationInfo ? 'enabled' : 'disabled'} colors={colors} />
       </View>
 
       {/* ── Database ── */}

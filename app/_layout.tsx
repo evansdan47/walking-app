@@ -34,6 +34,10 @@ LogBox.ignoreLogs([
   // request fails during reconnection (e.g. after long device idle). The client
   // recovers automatically — suppress the dev overlay noise.
   'Failed to construct \'Response\': The status provided (0) is outside the range',
+  // Convex internal: fires for every active subscription when the WebSocket
+  // reconnects after a long background idle (all queries re-deliver simultaneously).
+  // The delay is from connectivity loss, not a real server-side slowness.
+  'received query results totaling',
 ]);
 
 // Must be imported at the root so the background task is registered
@@ -120,6 +124,13 @@ export default function RootLayout() {
                     />
                     <Stack.Screen
                       name="walk-follow"
+                      options={{
+                        headerShown: false,
+                        presentation: 'fullScreenModal',
+                      }}
+                    />
+                    <Stack.Screen
+                      name="plan-walk"
                       options={{
                         headerShown: false,
                         presentation: 'fullScreenModal',

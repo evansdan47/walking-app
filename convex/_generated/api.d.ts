@@ -14,6 +14,7 @@ import type * as places from "../places.js";
 import type * as planned_routes from "../planned_routes.js";
 import type * as track_points from "../track_points.js";
 import type * as users from "../users.js";
+import type * as waitlist from "../waitlist.js";
 import type * as walk_photos from "../walk_photos.js";
 import type * as walks from "../walks.js";
 
@@ -30,6 +31,7 @@ declare const fullApi: ApiFromModules<{
   planned_routes: typeof planned_routes;
   track_points: typeof track_points;
   users: typeof users;
+  waitlist: typeof waitlist;
   walk_photos: typeof walk_photos;
   walks: typeof walks;
 }>;

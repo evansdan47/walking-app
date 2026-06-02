@@ -35,6 +35,8 @@ import { ExploreMapLayer, type ExploreViewBounds, type PlannedRoute } from '@/co
 import { ExploreSheetContent } from '@/components/explore/explore-sheet-content';
 import { FollowRouteLayer } from '@/components/follow/follow-route-layer';
 import { LivePositionLayer } from '@/components/map/live-position-layer';
+import { LocationInfoPanel } from '@/components/map/location-info-panel';
+import { MapCompassButton } from '@/components/map/map-compass';
 import { QueuedRouteLayer } from '@/components/map/queued-route-layer';
 import { AltitudeDisplay } from '@/components/recording/altitude-display';
 import { DistanceDisplay } from '@/components/recording/distance-display';
@@ -49,7 +51,10 @@ import { RouteProximityBadge } from '@/components/recording/route-proximity-badg
 import { SavePointButton } from '@/components/recording/save-point-button';
 import { EmptyWalkHistory } from '@/components/review/empty-walk-history';
 import { HistoryWalkCard } from '@/components/review/history-walk-card';
+import { PlanOverlay } from '@/components/planning/plan-overlay';
+import { PlanRouteLayer } from '@/components/planning/plan-route-layer';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
+import { usePlanWalk } from '@/hooks/use-plan-walk';
 import { SessionsSheetContent } from '@/components/sessions/sessions-sheet-content';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
@@ -65,6 +70,7 @@ import { api } from '@/convex/_generated/api';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useFeatureFlags, type FeatureFlags, type HapticImpactLevel } from '@/hooks/use-feature-flags';
 import { useLocationPermission } from '@/hooks/use-location-permission';
+import { useMapFeatures, type MapFeatureFlags } from '@/hooks/use-map-features';
 import { fireTestPulse } from '@/hooks/use-off-route-haptic';
 import { useRouteColours } from '@/hooks/use-route-colours';
 import { useStepCounter } from '@/hooks/use-step-counter';
@@ -1000,6 +1006,18 @@ function ProfileSheetContent({
   exploreDirectDetail,
   onToggleExploreDirectDetail,
   flags,
+  mapFeatures,
+  onSetMapFeature,
+  cam3dMinZoom,
+  onCam3dMinZoomChange,
+  cam3dMaxZoom,
+  onCam3dMaxZoomChange,
+  cam3dMinPitch,
+  onCam3dMinPitchChange,
+  cam3dMaxPitch,
+  onCam3dMaxPitchChange,
+  terrainExaggeration,
+  onTerrainExaggerationChange,
 }: {
   colors: ColorPalette;
   insets: ReturnType<typeof useSafeAreaInsets>;
@@ -1032,6 +1050,18 @@ function ProfileSheetContent({
   exploreDirectDetail: boolean;
   onToggleExploreDirectDetail: (value: boolean) => void;
   flags: FeatureFlags;
+  mapFeatures: MapFeatureFlags;
+  onSetMapFeature: <K extends keyof MapFeatureFlags>(key: K, value: MapFeatureFlags[K]) => void;
+  cam3dMinZoom: number;
+  onCam3dMinZoomChange: (value: number) => void;
+  cam3dMaxZoom: number;
+  onCam3dMaxZoomChange: (value: number) => void;
+  cam3dMinPitch: number;
+  onCam3dMinPitchChange: (value: number) => void;
+  cam3dMaxPitch: number;
+  onCam3dMaxPitchChange: (value: number) => void;
+  terrainExaggeration: number;
+  onTerrainExaggerationChange: (value: number) => void;
 }) {
   const { signOut } = useAuth();
   const { user } = useUser();
@@ -1496,6 +1526,193 @@ function ProfileSheetContent({
           </Pressable>
         </View>
 
+        {/* ── Map Features (Convex-backed) ── */}
+        <SheetAccordion title="Map Features" icon="map-outline" colors={colors}>
+          {/* 3D mode */}
+          <View style={sheetStyles.flagRow}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>3D mode</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>
+                Shows the map in a 45° isometric perspective.
+              </Text>
+            </View>
+            <Switch
+              value={mapFeatures.map3d}
+              onValueChange={(v) => void onSetMapFeature('map3d', v)}
+              trackColor={{ false: colors.border, true: colors.primary }}
+            />
+          </View>
+
+          {/* Compass overlay */}
+          <View style={sheetStyles.flagRow}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Compass overlay</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>
+                Shows a compass needle in the button strip. Tap to reset to north-up.
+              </Text>
+            </View>
+            <Switch
+              value={mapFeatures.mapCompass}
+              onValueChange={(v) => void onSetMapFeature('mapCompass', v)}
+              trackColor={{ false: colors.border, true: colors.primary }}
+            />
+          </View>
+
+          {/* Location info panel */}
+          <View style={sheetStyles.flagRow}>
+            <View style={sheetStyles.flagLabel}>
+              <Text style={[sheetStyles.flagName, { color: colors.text }]}>Location info panel</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>
+                Floating overlay showing lat/lng, OS grid ref, and nearest postcode.
+              </Text>
+            </View>
+            <Switch
+              value={mapFeatures.mapLocationInfo}
+              onValueChange={(v) => void onSetMapFeature('mapLocationInfo', v)}
+              trackColor={{ false: colors.border, true: colors.primary }}
+            />
+          </View>
+        </SheetAccordion>
+
+        {/* ── 3D Camera (dynamic pitch) ── */}
+        <SheetAccordion title="3D Camera" icon="videocam-outline" colors={colors}>
+          <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={sheetStyles.flagLabel}>
+                <Text style={[sheetStyles.flagName, { color: colors.text }]}>Pitch start zoom</Text>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Zoom level at which pitch starts increasing from the minimum</Text>
+              </View>
+              <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 32, textAlign: 'right' }]}>
+                {cam3dMinZoom.toFixed(1)}
+              </Text>
+            </View>
+            <DevSlider
+              minimumValue={10}
+              maximumValue={17}
+              step={0.5}
+              value={cam3dMinZoom}
+              onValueChange={(v) => onCam3dMinZoomChange(Math.min(v, cam3dMaxZoom - 0.5))}
+              trackFillColor={colors.primary}
+              trackEmptyColor={colors.border}
+              accentColor={colors.primary}
+              labelColor={colors.text}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>10 (wide)</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>17 (close)</Text>
+            </View>
+          </View>
+
+          <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={sheetStyles.flagLabel}>
+                <Text style={[sheetStyles.flagName, { color: colors.text }]}>Pitch end zoom</Text>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Zoom level at which pitch reaches the maximum (first-person)</Text>
+              </View>
+              <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 32, textAlign: 'right' }]}>
+                {cam3dMaxZoom.toFixed(1)}
+              </Text>
+            </View>
+            <DevSlider
+              minimumValue={11}
+              maximumValue={21}
+              step={0.5}
+              value={cam3dMaxZoom}
+              onValueChange={(v) => onCam3dMaxZoomChange(Math.max(v, cam3dMinZoom + 0.5))}
+              trackFillColor={colors.primary}
+              trackEmptyColor={colors.border}
+              accentColor={colors.primary}
+              labelColor={colors.text}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>11 (wide)</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>21 (street)</Text>
+            </View>
+          </View>
+
+          <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={sheetStyles.flagLabel}>
+                <Text style={[sheetStyles.flagName, { color: colors.text }]}>Min pitch</Text>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Camera angle when zoomed out (isometric end)</Text>
+              </View>
+              <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 40, textAlign: 'right' }]}>
+                {cam3dMinPitch}°
+              </Text>
+            </View>
+            <DevSlider
+              minimumValue={10}
+              maximumValue={60}
+              step={5}
+              value={cam3dMinPitch}
+              onValueChange={(v) => onCam3dMinPitchChange(Math.min(v, cam3dMaxPitch - 5))}
+              trackFillColor={colors.primary}
+              trackEmptyColor={colors.border}
+              accentColor={colors.primary}
+              labelColor={colors.text}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>10° (flat)</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>60°</Text>
+            </View>
+          </View>
+
+          <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={sheetStyles.flagLabel}>
+                <Text style={[sheetStyles.flagName, { color: colors.text }]}>Max pitch</Text>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>Camera angle when zoomed in (first-person end)</Text>
+              </View>
+              <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 40, textAlign: 'right' }]}>
+                {cam3dMaxPitch}°
+              </Text>
+            </View>
+            <DevSlider
+              minimumValue={30}
+              maximumValue={85}
+              step={5}
+              value={cam3dMaxPitch}
+              onValueChange={(v) => onCam3dMaxPitchChange(Math.max(v, cam3dMinPitch + 5))}
+              trackFillColor={colors.primary}
+              trackEmptyColor={colors.border}
+              accentColor={colors.primary}
+              labelColor={colors.text}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>30°</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>85° (FP)</Text>
+            </View>
+          </View>
+
+          {/* Terrain exaggeration */}
+          <View style={[sheetStyles.flagRow, { flexDirection: 'column', alignItems: 'stretch', gap: Spacing.xs }]}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <View style={sheetStyles.flagLabel}>
+                <Text style={[sheetStyles.flagName, { color: colors.text }]}>Terrain exaggeration</Text>
+                <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>How much elevation relief is amplified in 3D mode</Text>
+              </View>
+              <Text style={[sheetStyles.flagName, { color: colors.primary, minWidth: 40, textAlign: 'right' }]}>
+                {terrainExaggeration.toFixed(1)}×
+              </Text>
+            </View>
+            <DevSlider
+              minimumValue={1}
+              maximumValue={5}
+              step={0.1}
+              value={terrainExaggeration}
+              onValueChange={onTerrainExaggerationChange}
+              trackFillColor={colors.primary}
+              trackEmptyColor={colors.border}
+              accentColor={colors.primary}
+              labelColor={colors.text}
+            />
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>1.0× (real)</Text>
+              <Text style={[sheetStyles.flagDesc, { color: colors.textMuted }]}>5.0× (dramatic)</Text>
+            </View>
+          </View>
+        </SheetAccordion>
+
         {/* Route Colours — nested inside Dev Settings */}
         <View style={{ gap: Spacing.sm }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -1686,6 +1903,27 @@ function TabBar({
 }
 
 // ---------------------------------------------------------------------------
+// 3D dynamic-pitch helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Linearly interpolates a camera pitch from minPitch → maxPitch as the zoom
+ * level moves from minZoom → maxZoom.  Values outside the range are clamped.
+ */
+function computePitch3d(
+  zoom: number,
+  minZoom: number,
+  maxZoom: number,
+  minPitch: number,
+  maxPitch: number,
+): number {
+  if (zoom <= minZoom) return minPitch;
+  if (zoom >= maxZoom) return maxPitch;
+  const t = (zoom - minZoom) / (maxZoom - minZoom);
+  return minPitch + t * (maxPitch - minPitch);
+}
+
+// ---------------------------------------------------------------------------
 // Main screen
 // ---------------------------------------------------------------------------
 
@@ -1707,6 +1945,7 @@ export default function MapScreen() {
   useLiveWalkSync();
   const { isReviewActive, reviewRoute, reviewPhotos, onPhotoTap, reviewOverlayOptions } = useReviewRoute();
   const { flags, setFlag } = useFeatureFlags();
+  const { mapFeatures, setMapFeature } = useMapFeatures();
   const { queuedWalk, setQueuedWalk, clearQueuedWalk } = useQueuedWalk();
   // Prevents the auto-start from firing multiple times for the same GPS update burst.
   const autoStartFiredRef = useRef(false);
@@ -1738,6 +1977,76 @@ export default function MapScreen() {
   const followLocationRef = useRef(true);
   followLocationRef.current = followLocation;
   const cameraRef = useRef<MapboxGL.Camera>(null);
+  const mapViewRef = useRef<MapboxGL.MapView>(null);
+
+  // ── Map feature-flag derived state ───────────────────────────────────────
+  // Current camera bearing, updated via onRegionDidChange for the compass overlay.
+  const [mapBearing, setMapBearing] = useState(0);
+  // Local active state for the two toggle buttons unlocked by their feature flags.
+  // map3d flag enables the button; map3dActive tracks whether it's currently on.
+  const [map3dActive, setMap3dActive] = useState(false);
+  const map3dActiveRef = useRef(false);
+  map3dActiveRef.current = map3dActive;
+  // Current map zoom level — tracked from onRegionDidChange and used for dynamic 3D pitch.
+  const [mapZoomLevel, setMapZoomLevel] = useState(15);
+  const mapZoomLevelRef = useRef(15);
+  mapZoomLevelRef.current = mapZoomLevel;
+  // Current map center — updated on every camera frame so plan-walk can inherit the position.
+  const mapCenterCoordRef = useRef<[number, number]>([0, 0]);
+  // ── Planning overlay state ──────────────────────────────────────────────
+  const [planningActive, setPlanningActive] = useState(false);
+  const planningActiveRef = useRef(false);
+  planningActiveRef.current = planningActive;
+  const planWalk = usePlanWalk();
+  const addWaypointRef = useRef(planWalk.addWaypoint);
+  addWaypointRef.current = planWalk.addWaypoint;
+  // Dynamic pitch parameters: pitch scales linearly from minPitch→maxPitch as zoom goes minZoom→maxZoom.
+  const [cam3dMinZoom, setCam3dMinZoom] = useState(14);
+  const [cam3dMaxZoom, setCam3dMaxZoom] = useState(18);
+  const [cam3dMinPitch, setCam3dMinPitch] = useState(30);
+  const [cam3dMaxPitch, setCam3dMaxPitch] = useState(75);
+  const cam3dParamsRef = useRef({ minZoom: 14, maxZoom: 18, minPitch: 30, maxPitch: 75 });
+  cam3dParamsRef.current = { minZoom: cam3dMinZoom, maxZoom: cam3dMaxZoom, minPitch: cam3dMinPitch, maxPitch: cam3dMaxPitch };
+  // Terrain exaggeration — how much elevation is amplified when 3D is active.
+  const [terrainExaggeration, setTerrainExaggeration] = useState(1.5);
+  // mapLocationInfo flag enables the button; locationInfoVisible tracks whether the panel is open.
+  const [locationInfoVisible, setLocationInfoVisible] = useState(false);
+  // Screen-space position of the GPS dot — used to position the tooltip above it.
+  const [tooltipScreenPos, setTooltipScreenPos] = useState<{ x: number; y: number } | null>(null);
+  const [tooltipHeight, setTooltipHeight] = useState(90);
+  // Reset active states when their feature flag is turned off.
+  useEffect(() => { if (!mapFeatures.map3d) setMap3dActive(false); }, [mapFeatures.map3d]);
+  useEffect(() => {
+    if (!mapFeatures.mapLocationInfo) {
+      setLocationInfoVisible(false);
+      setTooltipScreenPos(null);
+    }
+  }, [mapFeatures.mapLocationInfo]);
+  useEffect(() => { if (!locationInfoVisible) setTooltipScreenPos(null); }, [locationInfoVisible]);
+  // Refresh tooltip screen position whenever the location or visibility changes.
+  const refreshTooltipPos = useCallback(() => {
+    if (!locationInfoVisible || !currentLocation || !mapViewRef.current) return;
+    mapViewRef.current
+      .getPointInView([currentLocation.longitude, currentLocation.latitude])
+      .then(([x, y]) => setTooltipScreenPos({ x, y }))
+      .catch(() => {});
+  }, [locationInfoVisible, currentLocation]);
+  // Store in a ref so onRegionDidChange (a stable closure) can always call the latest version.
+  const refreshTooltipPosRef = useRef(refreshTooltipPos);
+  refreshTooltipPosRef.current = refreshTooltipPos;
+  useEffect(() => { refreshTooltipPos(); }, [refreshTooltipPos]);
+  // Adjust camera pitch when the 3D button is toggled.
+  // Uses the current zoom level to set an appropriate initial pitch.
+  useEffect(() => {
+    if (map3dActive) {
+      const { minZoom, maxZoom, minPitch, maxPitch } = cam3dParamsRef.current;
+      const pitch = computePitch3d(mapZoomLevelRef.current, minZoom, maxZoom, minPitch, maxPitch);
+      cameraRef.current?.setCamera({ pitch, animationDuration: 500 });
+    } else {
+      cameraRef.current?.setCamera({ pitch: 0, animationDuration: 500 });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map3dActive]);
 
   // Sheet state
   const [activeSheet, setActiveSheet] = useState<SheetTab | null>(null);
@@ -1830,7 +2139,6 @@ export default function MapScreen() {
         if (followLocationRef.current && !isReviewActive && activeSheetRef.current !== 'explore' && activeSheetRef.current !== 'queued-walk') {
           cameraRef.current?.setCamera({
             centerCoordinate: [loc.coords.longitude, loc.coords.latitude],
-            zoomLevel: 15,
             animationDuration: 500,
           });
         }
@@ -2085,9 +2393,12 @@ export default function MapScreen() {
       return;
     }
 
-    // Plan tab — placeholder (future feature)
+    // Plan tab — activate the in-place planning overlay (no navigation = no map reload).
     if (tab === 'plan') {
-      Alert.alert('Coming Soon', 'Route planning will be available in a future update.');
+      // Close any other open sheet first.
+      setActiveSheet(null);
+      sheetRef.current?.close();
+      setPlanningActive(true);
       return;
     }
 
@@ -2380,16 +2691,46 @@ export default function MapScreen() {
     <View style={styles.container}>
       {/* Full-screen map */}
       <MapboxGL.MapView
+        ref={mapViewRef}
         style={StyleSheet.absoluteFill}
         styleURL={MapboxGL.StyleURL.Outdoors}
         logoEnabled={false}
         attributionEnabled={false}
         compassEnabled={false}
         onTouchStart={() => setFollowLocation(false)}
+        onPress={(feature: any) => {
+          if (!planningActiveRef.current) return;
+          const coords = feature?.geometry?.coordinates;
+          if (Array.isArray(coords) && coords.length >= 2) {
+            addWaypointRef.current(coords[1] as number, coords[0] as number);
+          }
+        }}
+        onCameraChanged={(state: any) => {
+          // Update bearing on every camera frame so the compass needle tracks rotation in real time.
+          const heading = state?.properties?.heading;
+          if (heading !== undefined) setMapBearing(heading as number);
+          // Track center so plan-walk can open at the same position.
+          const center = state?.properties?.center as [number, number] | undefined;
+          if (center) mapCenterCoordRef.current = center;
+        }}
         onRegionDidChange={(event: any) => {
+          const props = event?.properties;
+          // Reposition the location info tooltip after the camera settles.
+          void refreshTooltipPosRef.current();
+          // Track zoom and update 3D pitch dynamically (works regardless of which sheet is open).
+          if (props?.zoomLevel !== undefined) {
+            const zoom = props.zoomLevel as number;
+            setMapZoomLevel(zoom);
+            if (map3dActiveRef.current) {
+              const { minZoom, maxZoom, minPitch, maxPitch } = cam3dParamsRef.current;
+              cameraRef.current?.setCamera({
+                pitch: computePitch3d(zoom, minZoom, maxZoom, minPitch, maxPitch),
+                animationDuration: 300,
+              });
+            }
+          }
           // Only update explore bounds while the explore sheet is open.
           if (activeSheetRef.current !== 'explore') return;
-          const props = event?.properties;
           if (!props?.visibleBounds || props?.zoomLevel === undefined) return;
           const [[neLng, neLat], [swLng, swLat]] = props.visibleBounds as [[number, number], [number, number]];
           // Zoom drives JS clustering — only update when it crosses a cluster
@@ -2519,7 +2860,35 @@ export default function MapScreen() {
             {...(reviewOverlayOptions.colours ? { colours: reviewOverlayOptions.colours } : {})}
           />
         )}
+        {/* Planning route layer — rendered when planning mode is active */}
+        {planningActive && <PlanRouteLayer legs={planWalk.legs} />}
+        {/* Terrain DEM — active only when 3D mode is on */}
+        {map3dActive && (
+          <>
+            <MapboxGL.RasterDemSource
+              id="mapbox-dem"
+              url="mapbox://mapbox.mapbox-terrain-dem-v1"
+              tileSize={512}
+              maxZoomLevel={14}
+            />
+            <MapboxGL.Terrain
+              sourceID="mapbox-dem"
+              style={{ exaggeration: terrainExaggeration }}
+            />
+          </>
+        )}
       </MapboxGL.MapView>
+
+      {/* Planning overlay — header + bottom sheet, no separate MapView so no tile reload */}
+      {planningActive && (
+        <PlanOverlay
+          planning={planWalk}
+          onClose={() => {
+            planWalk.resetToEmpty();
+            setPlanningActive(false);
+          }}
+        />
+      )}
 
       {/* Recording status badge (with inline GPS signal) — top-centre map overlay */}
       {isRecording && (
@@ -2783,6 +3152,18 @@ export default function MapScreen() {
             exploreDirectDetail={flags.exploreDirectDetail}
             onToggleExploreDirectDetail={(v) => setFlag('exploreDirectDetail', v)}
             flags={flags}
+            mapFeatures={mapFeatures}
+            onSetMapFeature={(key, value) => void setMapFeature(key, value)}
+            cam3dMinZoom={cam3dMinZoom}
+            onCam3dMinZoomChange={setCam3dMinZoom}
+            cam3dMaxZoom={cam3dMaxZoom}
+            onCam3dMaxZoomChange={setCam3dMaxZoom}
+            cam3dMinPitch={cam3dMinPitch}
+            onCam3dMinPitchChange={setCam3dMinPitch}
+            cam3dMaxPitch={cam3dMaxPitch}
+            onCam3dMaxPitchChange={setCam3dMaxPitch}
+            terrainExaggeration={terrainExaggeration}
+            onTerrainExaggerationChange={setTerrainExaggeration}
           />
         )}
       </BottomSheet>
@@ -2804,7 +3185,6 @@ export default function MapScreen() {
               if (currentLocation) {
                 cameraRef.current?.setCamera({
                   centerCoordinate: [currentLocation.longitude, currentLocation.latitude],
-                  zoomLevel: 15,
                   animationDuration: 400,
                 });
               }
@@ -2817,6 +3197,57 @@ export default function MapScreen() {
               color={followLocation ? '#fff' : colors.textMuted}
             />
           </TouchableOpacity>
+
+          {/* Compass button — visible when mapCompass is on.
+               Selected (primary) when north-up; deselected when rotated. */}
+          {mapFeatures.mapCompass && (
+            <MapCompassButton
+              bearing={mapBearing}
+              onResetNorth={() => {
+                cameraRef.current?.setCamera({ heading: 0, animationDuration: 300 });
+              }}
+              backgroundColor={
+                mapBearing < 0.5 || mapBearing > 359.5 ? colors.primary : colors.backgroundCard
+              }
+              borderColor={
+                mapBearing < 0.5 || mapBearing > 359.5 ? 'transparent' : colors.border
+              }
+            />
+          )}
+
+          {/* 3D toggle — visible when map3d feature flag is on */}
+          {mapFeatures.map3d && (
+            <TouchableOpacity
+              style={[
+                styles.mapButton,
+                map3dActive
+                  ? { backgroundColor: colors.primary }
+                  : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
+              ]}
+              onPress={() => setMap3dActive((v) => !v)}
+              activeOpacity={0.8}
+              accessibilityLabel={map3dActive ? 'Switch to flat view' : 'Switch to 3D view'}
+            >
+              <IconSymbol name="cube" size={20} color={map3dActive ? '#fff' : colors.textMuted} />
+            </TouchableOpacity>
+          )}
+
+          {/* Location info toggle — visible when mapLocationInfo feature flag is on */}
+          {mapFeatures.mapLocationInfo && (
+            <TouchableOpacity
+              style={[
+                styles.mapButton,
+                locationInfoVisible
+                  ? { backgroundColor: colors.primary }
+                  : { backgroundColor: colors.backgroundCard, borderWidth: 1.5, borderColor: colors.border },
+              ]}
+              onPress={() => setLocationInfoVisible((v) => !v)}
+              activeOpacity={0.8}
+              accessibilityLabel={locationInfoVisible ? 'Hide location info' : 'Show location info'}
+            >
+              <IconSymbol name="info.circle" size={20} color={locationInfoVisible ? '#fff' : colors.textMuted} />
+            </TouchableOpacity>
+          )}
 
           {/* Photo button — only while actively recording */}
           {isActive && state.phase === 'recording' && (
@@ -2834,6 +3265,29 @@ export default function MapScreen() {
               style={styles.mapButton}
             />
           )}
+        </View>
+      )}
+
+      {/* Location info tooltip — absolutely positioned above the GPS dot, no MapboxGL layer involved */}
+      {locationInfoVisible && currentLocation && tooltipScreenPos && (
+        <View
+          pointerEvents="none"
+          onLayout={(e) => setTooltipHeight(e.nativeEvent.layout.height)}
+          style={{
+            position: 'absolute',
+            left: tooltipScreenPos.x,
+            top: tooltipScreenPos.y,
+            transform: [{ translateX: -110 }, { translateY: -tooltipHeight }],
+          }}
+        >
+          <LocationInfoPanel
+            latitude={currentLocation.latitude}
+            longitude={currentLocation.longitude}
+            backgroundColor={colors.backgroundCard}
+            textColor={colors.text}
+            mutedColor={colors.textMuted}
+            borderColor={colors.border}
+          />
         </View>
       )}
 
@@ -2921,7 +3375,6 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
-    elevation: 2,
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,

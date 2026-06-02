@@ -244,6 +244,53 @@ function ActivityDetail({ walk, track, onBack, onElevHoverIdx, panelWidth, onWid
     };
   }, [onWidthChange]);
 
+  // ── Mobile height resize ──────────────────────────────────────────────
+  const [panelHeight, setPanelHeight] = usePanelHeight();
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= MOBILE_BREAKPOINT,
+  );
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth <= MOBILE_BREAKPOINT);
+    window.addEventListener('resize', handler);
+    return () => window.removeEventListener('resize', handler);
+  }, []);
+
+  const isHeightDragging = useRef(false);
+  const heightDragStartY = useRef(0);
+  const heightDragStartHeight = useRef(0);
+
+  const onTopGripperDown = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      isHeightDragging.current = true;
+      heightDragStartY.current = e.clientY;
+      heightDragStartHeight.current = panelHeight;
+      document.body.style.cursor = 'ns-resize';
+      document.body.style.userSelect = 'none';
+    },
+    [panelHeight],
+  );
+
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (!isHeightDragging.current) return;
+      const next = heightDragStartHeight.current - (e.clientY - heightDragStartY.current);
+      setPanelHeight(Math.min(PANEL_MAX_HEIGHT, Math.max(PANEL_MIN_HEIGHT, next)));
+    }
+    function onUp() {
+      if (!isHeightDragging.current) return;
+      isHeightDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    }
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    return () => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+  }, [setPanelHeight]);
+
   // ─────────────────────────────────────────────────────────────────
 
   const elevPoints = useMemo(
