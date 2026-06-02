@@ -1,0 +1,222 @@
+import { v } from 'convex/values';
+import { mutation, query } from './_generated/server';
+
+const pointValidator = v.object({
+  lng: v.number(),
+  lat: v.number(),
+  isControlPoint: v.optional(v.boolean()),
+  isSnapped: v.optional(v.boolean()),
+});
+
+const legValidator = v.object({
+  id: v.string(),
+  name: v.string(),
+  color: v.string(),
+  points: v.array(pointValidator),
+});
+
+const visibilityValidator = v.union(
+  v.literal('private'),
+  v.literal('shared'),
+  v.literal('public'),
+);
+
+/**
+ * Save a planned route for the currently authenticated user.
+ * New routes default to "private".
+ */
+export const save = mutation({
+  args: {
+    title: v.string(),
+    description: v.optional(v.string()),
+    legs: v.array(legValidator),
+    stats: v.optional(
+      v.object({
+        distanceKm: v.number(),
+        elevationGainM: v.number(),
+      }),
+    ),
+    visibility: v.optional(visibilityValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Not authenticated');
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error('User not found');
+
+    return await ctx.db.insert('plannedRoutes', {
+      userId: user._id,
+      authorId: user._id,
+      visibility: args.visibility ?? 'private',
+      title: args.title.trim(),
+      createdAt: Date.now(),
+      legs: args.legs,
+      ...(args.description?.trim() ? { description: args.description.trim() } : {}),
+      ...(args.stats !== undefined ? { stats: args.stats } : {}),
+    });
+  },
+});
+
+/**
+ * List all planned routes for the currently authenticated user, newest first.
+ */
+export const listForCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+    return await ctx.db
+      .query('plannedRoutes')
+      .withIndex('by_userId_and_createdAt', (q) => q.eq('userId', user._id))
+      .order('desc')
+      .collect();
+  },
+});
+
+/**
+ * List the authenticated user's public planned routes.
+ * Used by the mobile Explore sync engine to ensure own public routes always
+ * appear in the local SQLite cache, regardless of which region is currently
+ * on-screen. Returns an empty array when the caller is unauthenticated.
+ */
+export const listOwnPublic = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return [];
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return [];
+    const all = await ctx.db
+      .query('plannedRoutes')
+      .withIndex('by_userId_and_createdAt', (q) => q.eq('userId', user._id))
+      .collect();
+    return all.filter((r) => (r.visibility ?? 'public') === 'public');
+  },
+});
+
+/**
+ * Same as listWithinBounds but enriches each route with its author's display
+ * name. Used by the Explore overlay to show who created the route.
+ */
+export const listWithinBoundsWithAuthors = query({
+  args: {
+    minLat: v.number(),
+    maxLat: v.number(),
+    minLng: v.number(),
+    maxLng: v.number(),
+  },
+  handler: async (ctx, bounds) => {
+    // Re-use the same visibility + spatial logic
+    const identity = await ctx.auth.getUserIdentity();
+    let currentUserId: string | null = null;
+    if (identity) {
+      const user = await ctx.db
+        .query('users')
+        .withIndex('by_tokenIdentifier', (q) =>
+          q.eq('tokenIdentifier', identity.tokenIdentifier),
+        )
+        .unique();
+      currentUserId = user?._id ?? null;
+    }
+
+    const all = await ctx.db.query('plannedRoutes').collect();
+    const { minLat, maxLat, minLng, maxLng } = bounds;
+
+    const visible = all.filter((route) => {
+      const vis = route.visibility ?? 'public';
+      const isOwner = currentUserId !== null && route.userId === currentUserId;
+      if (vis !== 'public' && !isOwner) return false;
+      for (const leg of route.legs) {
+        for (const pt of leg.points) {
+          if (
+            pt.lat >= minLat && pt.lat <= maxLat &&
+            pt.lng >= minLng && pt.lng <= maxLng
+          ) return true;
+        }
+      }
+      return false;
+    });
+
+    // Batch-load unique authors
+    const authorIds = [...new Set(visible.map((r) => r.authorId ?? r.userId))];
+    const authorDocs = await Promise.all(authorIds.map((id) => ctx.db.get(id)));
+    const authorMap = new Map(
+      authorDocs
+        .filter((d): d is NonNullable<typeof d> => d !== null)
+        .map((d) => [d._id, d.name ?? 'Unknown']),
+    );
+
+    return visible.map((route) => ({
+      ...route,
+      authorName: authorMap.get(route.authorId ?? route.userId) ?? 'Unknown',
+      // Normalise: legacy rows without visibility are treated as public
+      visibility: route.visibility ?? 'public',
+      // Lets the client show Edit button without a separate auth query
+      isOwner: currentUserId !== null && route.userId === currentUserId,
+    }));
+  },
+});
+
+/**
+ * Update an existing planned route. Only the route owner or an admin user may
+ * call this. The authorId and userId fields are preserved unchanged.
+ */
+export const update = mutation({
+  args: {
+    id: v.id('plannedRoutes'),
+    title: v.string(),
+    description: v.optional(v.string()),
+    legs: v.array(legValidator),
+    stats: v.optional(
+      v.object({
+        distanceKm: v.number(),
+        elevationGainM: v.number(),
+      }),
+    ),
+    visibility: v.optional(visibilityValidator),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error('Not authenticated');
+    const user = await ctx.db
+      .query('users')
+      .withIndex('by_tokenIdentifier', (q) =>
+        q.eq('tokenIdentifier', identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error('User not found');
+
+    const route = await ctx.db.get(args.id);
+    if (!route) throw new Error('Route not found');
+    if (route.userId !== user._id && user.isAdmin !== true) {
+      throw new Error('Not authorised to edit this route');
+    }
+
+    await ctx.db.patch(args.id, {
+      title: args.title.trim(),
+      legs: args.legs,
+      ...(args.description?.trim() ? { description: args.description.trim() } : { description: undefined }),
+      ...(args.stats !== undefined ? { stats: args.stats } : {}),
+      ...(args.visibility !== undefined ? { visibility: args.visibility } : {}),
+    });
+
+    return args.id;
+  },
+});

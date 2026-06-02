@@ -564,7 +564,7 @@ type WeightUnit = 'kg' | 'lb' | 'stone';
 function SetWeightDialog({ open, onClose, onSave, currentWeightKg }: {
   open: boolean;
   onClose: () => void;
-  onSave: (kg: number) => Promise<void>;
+  onSave: (kg: number) => Promise<void | null>;
   currentWeightKg?: number;
 }) {
   const [value, setValue] = useState('');

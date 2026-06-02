@@ -1,33 +1,32 @@
-﻿'use client';
+'use client';
 
 import { useUndoRedo } from '@/hooks/use-undo-redo';
 import { usePreview } from '@/components/preview-context';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CircleLayer, LineLayer, SymbolLayer } from 'react-map-gl/mapbox';
-import Map, { Layer, Marker, Popup, Source, type MapLayerMouseEvent, type MapRef } from 'react-map-gl/mapbox';
+import Map, { Layer, Marker, Popup, Source, type LayerProps, type MapMouseEvent, type MapRef } from 'react-map-gl/mapbox';
 import { ExploreMapLayers, ExploreOverlay, type EnrichedRoute } from './explore-overlay';
 import { ActivityOverlay } from './activity-overlay';
 import { PlannerOverlay, SEGMENT_COLOURS, bearingDeg, densifyPoints, haversineKm, toGeoJSON, toMultiGeoJSON, type ChartRange, type Leg, type Point } from './planner-overlay';
 import { PLACE_TYPE_META } from './poi-add-form';
 import type { Id } from '@convex/_generated/dataModel';
 
-// ── Planner initial state (module-scope so it’s a stable reference) ──────────────
+// -- Planner initial state (module-scope so it�s a stable reference) --------------
 const INITIAL_LEGS: Leg[] = [
   { id: 's1', name: 'Leg 1', color: SEGMENT_COLOURS[0], points: [] },
 ];
 
-// â”€â”€ Route layer styles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Route layer styles ─────────────────────────────────────────────────────────
 
-const routeOutlineLayer: LineLayer = {
+const routeOutlineLayer: LayerProps = {
   id: 'route-outline',
   type: 'line',
   layout: { 'line-join': 'round', 'line-cap': 'round' },
   paint: { 'line-color': '#ffffff', 'line-width': 7, 'line-opacity': 0.9 },
 };
 
-const routeLayer: LineLayer = {
+const routeLayer: LayerProps = {
   id: 'route-line',
   type: 'line',
   layout: { 'line-join': 'round', 'line-cap': 'round' },
@@ -36,7 +35,7 @@ const routeLayer: LineLayer = {
 
 // White arrowhead chevrons placed every 80px along the route, auto-rotated to
 // follow the line direction. Density increases naturally as the user zooms in.
-const routeArrowLayer: SymbolLayer = {
+const routeArrowLayer: LayerProps = {
   id: 'route-arrows',
   type: 'symbol',
   minzoom: 10,
@@ -58,14 +57,14 @@ const routeArrowLayer: SymbolLayer = {
 
 // routeBallsLayer and routeBallArrowsLayer are built dynamically inside MapShell from ballTuning state.
 
-const rangeHighlightLayer: LineLayer = {
+const rangeHighlightLayer: LayerProps = {
   id: 'elevation-range-line',
   type: 'line',
   layout: { 'line-join': 'round', 'line-cap': 'round' },
   paint: { 'line-color': '#FF9800', 'line-width': 6, 'line-opacity': 0.9 },
 };
 
-// â”€â”€ URL helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── URL helpers ────────────────────────────────────────────────────────────────
 
 const DEFAULT_VIEW = { longitude: -5.22, latitude: 50.32, zoom: 12 };
 
@@ -81,14 +80,14 @@ function readInitialView() {
   };
 }
 
-// â”€â”€ Route animation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Route animation helpers ──────────────────────────────────────────────────
 
-/** Cubic ease-out: fast start, gentle finish â€” good for drawing in a line. */
+/** Cubic ease-out: fast start, gentle finish — good for drawing in a line. */
 function easeOutCubic(t: number): number {
   return 1 - Math.pow(1 - t, 3);
 }
 
-/** Lerp two bearings across the 360Â° boundary. t=0 â†’ from, t=1 â†’ to. */
+/** Lerp two bearings across the 360° boundary. t=0 → from, t=1 → to. */
 function lerpBearing(from: number, to: number, t: number): number {
   const diff = ((to - from) + 540) % 360 - 180;
   return (from + diff * t + 360) % 360;
@@ -114,7 +113,7 @@ function interpolateRoute(points: Point[], progress: number): Point[] {
   return result;
 }
 
-// â”€â”€ Directions API helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Directions API helper ─────────────────────────────────────────────────────
 
 /**
  * Calls the Mapbox Directions API (walking profile) and returns the snapped
@@ -138,11 +137,11 @@ async function fetchSnappedRoute(
   };
   const coords = data.routes?.[0]?.geometry?.coordinates;
   if (!coords?.length) throw new Error('No route found');
-  // Skip first coord â€” it duplicates the origin already committed to the route
+  // Skip first coord — it duplicates the origin already committed to the route
   return coords.slice(1).map(([lng, lat]) => ({ lng, lat }));
 }
 
-// â”€â”€ MapShell â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── MapShell ──────────────────────────────────────────────────────────────────
 
 type Mode = 'explore' | 'planner' | 'activity';
 
@@ -157,13 +156,13 @@ export function MapShell() {
   const router = useRouter();
   const { setIsPreviewing } = usePreview();
 
-  // Initial viewport â€” read from URL once on mount, never reset by re-renders
+  // Initial viewport — read from URL once on mount, never reset by re-renders
   const initialViewRef = useRef<typeof DEFAULT_VIEW | null>(null);
   if (!initialViewRef.current) initialViewRef.current = readInitialView();
 
   const mapRef = useRef<MapRef>(null);
 
-  // Planner state â€” pointer-based undo/redo queue
+  // Planner state — pointer-based undo/redo queue
   const initialLegs: Leg[] = [
     { id: 's1', name: 'Leg 1', color: SEGMENT_COLOURS[0], points: [] },
   ];
@@ -180,25 +179,25 @@ export function MapShell() {
   const [editingRoute, setEditingRoute] = useState<EnrichedRoute | null>(null);
   const [snapToPath, setSnapToPath] = useState(true);
 
-  // ── Activity mode state ──────────────────────────────────────────────────
+  // -- Activity mode state --------------------------------------------------
   /** Points of the currently previewed / selected GPS track (from trackPoints). */
   const [activityTrack, setActivityTrack] = useState<Point[]>([]);
   const [activityElevHoverIdx, setActivityElevHoverIdx] = useState<number | null>(null);
   const [turnaroundIdx, setTurnaroundIdx] = useState<number | null>(null);
   const [isPending, setIsPending] = useState(false);
 
-  // ── POI placement mode ────────────────────────────────────────────────────
+  // -- POI placement mode ----------------------------------------------------
   // When true the next map click drops a POI marker instead of a route point.
   const [poiMode, setPoiMode] = useState(false);
   const [pendingPoiLngLat, setPendingPoiLngLat] = useState<{ lng: number; lat: number } | null>(null);
-  /** Mirror of PlannerOverlay's pendingPois — used only for map marker rendering. */
+  /** Mirror of PlannerOverlay's pendingPois � used only for map marker rendering. */
   const [poiMarkers, setPoiMarkers] = useState<Array<{ lngLat: { lng: number; lat: number }; type: string; name?: string }>>([]);
   const [hoveredPoiIdx, setHoveredPoiIdx] = useState<number | null>(null);
-  // Hovered ball ID — drives hover highlight on the route balls circle layer
+  // Hovered ball ID � drives hover highlight on the route balls circle layer
   const [hoveredBallId, setHoveredBallId] = useState<number | null>(null);
   const [hoveredBallTooltip, setHoveredBallTooltip] = useState<{ x: number; y: number; isControlPoint: boolean } | null>(null);
 
-  // ── Ball-tuning state (adjustable via debug panel) ────────────────────────
+  // -- Ball-tuning state (adjustable via debug panel) ------------------------
   const [ballTuning] = useState({
     spacingM:       200,   // metres between balls
     radiusNear:     3.5,   // circle-radius zoomed out
@@ -210,7 +209,7 @@ export function MapShell() {
     arrowSizeNear:  0.25,
     arrowSizeFar:   0.60,
   });
-  const routeBallsLayer = useMemo<CircleLayer>(() => ({
+  const routeBallsLayer = useMemo((): LayerProps => ({
     id: 'route-balls',
     type: 'circle',
     paint: {
@@ -232,7 +231,7 @@ export function MapShell() {
     },
   }), [ballTuning.radiusNear, ballTuning.radiusFar, ballTuning.color, ballTuning.strokeWidth, ballTuning.opacity]);
 
-  const routeBallArrowsLayer = useMemo<SymbolLayer>(() => ({
+  const routeBallArrowsLayer = useMemo((): LayerProps => ({
     id: 'route-ball-arrows',
     type: 'symbol',
     filter: ['==', ['get', 'hasArrow'], true],
@@ -250,7 +249,7 @@ export function MapShell() {
     },
   }), [ballTuning.arrowSizeNear, ballTuning.arrowSizeFar]);
 
-  // Viewport bounds — updated on every moveend, used by ExploreOverlay
+  // Viewport bounds � updated on every moveend, used by ExploreOverlay
   const [viewBounds, setViewBounds] = useState<{ minLat: number; maxLat: number; minLng: number; maxLng: number } | null>(null);
 
   // Explore mode: selected route (shared between ExploreMapLayers inside <Map> and ExploreOverlay panel)
@@ -261,7 +260,7 @@ export function MapShell() {
     elevations: number[];
   } | null>(null);
   const [exploreElevHoverIdx, setExploreElevHoverIdx] = useState<number | null>(null);
-  // Active filter — null means no filter (show all pins)
+  // Active filter � null means no filter (show all pins)
   const [exploreFilteredIds, setExploreFilteredIds] = useState<Set<string> | null>(null);
 
   // Elevation chart state
@@ -272,7 +271,7 @@ export function MapShell() {
   // Cache elevation by "lng,lat" key so off-screen tile eviction doesn't wipe data
   const elevationCacheRef = useRef<globalThis.Map<string, number>>(new globalThis.Map());
 
-  // â”€â”€ Flyby preview state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Flyby preview state ────────────────────────────────────────────
   const [isFlyby, setIsFlyby] = useState(false);
   const [flybyStepIdx, setFlybyStepIdx] = useState(0);
   const [flybyTotalSteps, setFlybyTotalSteps] = useState(0);
@@ -280,7 +279,7 @@ export function MapShell() {
   const savedCameraRef = useRef<{ center: [number, number]; zoom: number; pitch: number; bearing: number } | null>(null);
   const previewRafRef = useRef<number | null>(null);
 
-  // â”€â”€ Walk-preview (chase-cam) state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Walk-preview (chase-cam) state ───────────────────────────────
   const [isWalkPreview, setIsWalkPreview] = useState(false);
   const [walkPreviewPaused, setWalkPreviewPaused] = useState(false);
   const [walkPreviewPct, setWalkPreviewPct] = useState(0);
@@ -288,7 +287,7 @@ export function MapShell() {
   const walkPreviewRafRef = useRef<number | null>(null);
   const walkSavedCameraRef = useRef<{ center: [number, number]; zoom: number; pitch: number; bearing: number } | null>(null);
   // Stable refs for pause/seek without restarting the animation
-  const walkProgressRef = useRef(0);      // 0â€“1
+  const walkProgressRef = useRef(0);      // 0–1
   const walkDurationRef = useRef(60_000); // ms
   const walkStartTimeRef = useRef(0);     // performance.now() at t=0
   const walkDensePointsRef = useRef<Point[]>([]);
@@ -296,23 +295,23 @@ export function MapShell() {
   const walkTickRef = useRef<((now: number) => void) | null>(null);
   const walkCleanupRef = useRef<(() => void) | null>(null);
   // Preview camera state owned entirely by the rAF tick
-  const previewBearingTargetRef = useRef(0);  // orbit buttons add Â±45 here
+  const previewBearingTargetRef = useRef(0);  // orbit buttons add ±45 here
   const previewBearingCurrentRef = useRef(0); // lerped toward target each frame
   const previewZoomTargetRef = useRef(16.5);  // zoom buttons set this
   const previewZoomCurrentRef = useRef(16.5);  // lerped toward target each frame
-  // Playback speed multiplier (1 = normal, 2 = 2Ã— faster)
+  // Playback speed multiplier (1 = normal, 2 = 2× faster)
   const walkSpeedRef = useRef(1);
   const [walkSpeed, setWalkSpeed] = useState(1);
   // Ref mirror of walkPreviewPaused so the rAF tick can read it without a closure
   const walkPausedRef = useRef(false);
-  // Cumulative distance through the dense animation path (same units as haversineKm â†’ km)
+  // Cumulative distance through the dense animation path (same units as haversineKm → km)
   const walkCumDistRef = useRef<number[]>([]);
   const walkDenseTotalRef = useRef(1); // total path length of dense animation array (km)
 
-  // Derived planner state â€” memoized so reference only changes when legs changes,
+  // Derived planner state — memoized so reference only changes when legs changes,
   // preventing the animation useEffect from firing on every render.
   const allPoints = useMemo(() => legs.flatMap((s) => s.points), [legs]);
-  // Active leg â€” the leg that receives new map clicks. Memoised so isLoop and
+  // Active leg — the leg that receives new map clicks. Memoised so isLoop and
   // markers react to leg switches without depending on allPoints.
   const activeLeg = useMemo(
     () => legs.find(s => s.id === activeSegmentId) ?? legs[legs.length - 1],
@@ -325,7 +324,7 @@ export function MapShell() {
     activeLeg.points[0].lng === activeLeg.points[activeLeg.points.length - 1].lng &&
     activeLeg.points[0].lat === activeLeg.points[activeLeg.points.length - 1].lat;
 
-  // â”€â”€ Animated display state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // ── Animated display state ────────────────────────────────────────────────
   // `displayPoints` trails `allPoints` during animations. The GeoJSON line and
   // the end marker use `displayPoints`; all behavioural logic uses `allPoints`.
   const [displayPoints, setDisplayPoints] = useState<Point[]>([]);
@@ -394,7 +393,7 @@ export function MapShell() {
 
   // Sample terrain elevation for every route change.
   // Uses a coordinate cache so points that scroll off-screen keep their elevation.
-  // Only newly-seen coordinates are queried â€” they are always in the current viewport
+  // Only newly-seen coordinates are queried — they are always in the current viewport
   // because the user just clicked there.
   useEffect(() => {
     if (isWalkPreview) return;
@@ -609,7 +608,7 @@ export function MapShell() {
     });
   }, []);
 
-  // Camera control callbacks â€” mutate refs directly; rAF tick picks them up next frame
+  // Camera control callbacks — mutate refs directly; rAF tick picks them up next frame
   const zoomInPreview = useCallback(() => {
     previewZoomTargetRef.current = Math.min(previewZoomTargetRef.current + 1, 20);
   }, []);
@@ -649,7 +648,7 @@ export function MapShell() {
     if (densePoints.length < 2) return;
     let totalDistKm = 0;
     for (let i = 1; i < pts.length; i++) totalDistKm += haversineKm(pts[i - 1], pts[i]);
-    // ~10 km/h preview speed, clamped 20 s â€“ 120 s
+    // ~10 km/h preview speed, clamped 20 s – 120 s
     const DURATION = Math.max(20_000, Math.min((totalDistKm / 10) * 3_600_000, 120_000));
 
     walkDensePointsRef.current = densePoints;
@@ -690,13 +689,13 @@ export function MapShell() {
     setIsWalkPreview(true);
     setIsPreviewing(true);
 
-    // Disable all interactions â€” the rAF tick owns the full camera state each frame
+    // Disable all interactions — the rAF tick owns the full camera state each frame
     mapInstance.dragPan.disable();
     mapInstance.dragRotate.disable();
     mapInstance.scrollZoom.disable();
     mapInstance.keyboard.disable();
 
-    // Hide noisy label layers — contour elevations, roads, POIs etc.
+    // Hide noisy label layers � contour elevations, roads, POIs etc.
     // Keep 'natural-label' visible so summit/peak names still show.
     const HIDE_LABELS = [
       'contour-label',
@@ -718,7 +717,7 @@ export function MapShell() {
     // Terrain + atmosphere
     mapInstance.setTerrain({ source: 'mapbox-dem', exaggeration: 1.8 });
     // Fog: range < 1.0 = inside the visible frustum (1.0 = horizon).
-    // [0.4, 8] means fog starts at 40% of view distance and is fully opaque at 8× that.
+    // [0.4, 8] means fog starts at 40% of view distance and is fully opaque at 8� that.
     // This causes Mapbox to deprioritise/skip requesting tiles beyond the fog cutoff,
     // significantly reducing satellite tile fetches for far-off areas.
     (mapInstance as any).setFog({
@@ -728,7 +727,7 @@ export function MapShell() {
       'horizon-blend': 0.35,
       'star-intensity': 0.1,
     });
-    // No sky layer — it competes with fog at the horizon and adds tiles
+    // No sky layer � it competes with fog at the horizon and adds tiles
 
     // Satellite underlay below existing route layers
     if (!mapInstance.getSource('walk-satellite-src')) {
@@ -739,7 +738,7 @@ export function MapShell() {
       mapInstance.addLayer({ id: 'walk-satellite', type: 'raster', source: 'walk-satellite-src' }, satBefore);
     }
     // White route overlay for legibility on satellite.
-    // In explore mode pts come via pointsOverride — add a dedicated source so
+    // In explore mode pts come via pointsOverride � add a dedicated source so
     // the correct route is shown rather than the (empty) planner 'route' source.
     const routeLineGeoJSON = {
       type: 'FeatureCollection' as const,
@@ -759,7 +758,7 @@ export function MapShell() {
         layout: { 'line-join': 'round', 'line-cap': 'round' },
         paint: { 'line-color': 'rgba(255,255,255,0.75)', 'line-width': 3.5 } });
     }
-    // Orange traversed-portion line — updated every rAF frame
+    // Orange traversed-portion line � updated every rAF frame
     const emptyLine = { type: 'Feature' as const, geometry: { type: 'LineString' as const, coordinates: [[densePoints[0].lng, densePoints[0].lat]] }, properties: {} };
     if (!mapInstance.getSource('walk-traversed-src')) {
       mapInstance.addSource('walk-traversed-src', { type: 'geojson', data: emptyLine });
@@ -776,7 +775,7 @@ export function MapShell() {
       mapInstance.addLayer({ id: 'walk-dot-halo', type: 'circle', source: 'walk-dot-src',
         paint: { 'circle-radius': 14, 'circle-color': '#ffffff', 'circle-opacity': 0.22, 'circle-pitch-alignment': 'map' } });
     }
-    // Sonar pulse ring â€” radius and opacity driven each frame by setPaintProperty
+    // Sonar pulse ring — radius and opacity driven each frame by setPaintProperty
     if (!mapInstance.getLayer('walk-dot-pulse')) {
       mapInstance.addLayer({ id: 'walk-dot-pulse', type: 'circle', source: 'walk-dot-src',
         paint: { 'circle-radius': 6, 'circle-color': 'transparent', 'circle-stroke-color': '#E65100',
@@ -794,16 +793,16 @@ export function MapShell() {
       mapInstance.keyboard.enable();
     };
 
-    // rAF tick â€” runs continuously (even when paused) for smooth camera + pulse.
+    // rAF tick — runs continuously (even when paused) for smooth camera + pulse.
     // Position advance and dot update only happen when not paused.
-    // interpAtT maps t (time fraction 0-1) â†’ distance-proportional position so
+    // interpAtT maps t (time fraction 0-1) → distance-proportional position so
     // the puck stays in sync with the distance-based elevation chart cursor.
     const tick = (now: number) => {
       if (walkPreviewAbortRef.current) return;
 
       const paused = walkPausedRef.current;
 
-      // â”€ Position â”€ only advance when playing
+      // ─ Position ─ only advance when playing
       let targetLng: number;
       let targetLat: number;
       if (!paused) {
@@ -844,17 +843,17 @@ export function MapShell() {
         });
       }
 
-      // â”€ Bearing lerp â”€ always
+      // ─ Bearing lerp ─ always
       previewBearingCurrentRef.current = lerpBearing(
         previewBearingCurrentRef.current,
         previewBearingTargetRef.current,
         0.12,
       );
 
-      // â”€ Zoom lerp â”€ always
+      // ─ Zoom lerp ─ always
       previewZoomCurrentRef.current += (previewZoomTargetRef.current - previewZoomCurrentRef.current) * 0.12;
 
-      // â”€ Sonar pulse â”€ always
+      // ─ Sonar pulse ─ always
       const pulseT = (now % 1500) / 1500;
       if (mapInstance.getLayer('walk-dot-pulse')) {
         mapInstance.setPaintProperty('walk-dot-pulse', 'circle-radius', 6 + pulseT * 84);
@@ -862,7 +861,7 @@ export function MapShell() {
         mapInstance.setPaintProperty('walk-dot-pulse', 'circle-stroke-opacity', 0.9 * (1 - pulseT));
       }
 
-      // â”€ Camera â”€ always (so orbit/zoom work while paused)
+      // ─ Camera ─ always (so orbit/zoom work while paused)
       mapInstance.jumpTo({
         center: [targetLng!, targetLat!],
         bearing: previewBearingCurrentRef.current,
@@ -880,7 +879,7 @@ export function MapShell() {
     // Sample terrain elevations for the elevation chart.
     // For explore-route overrides (pointsOverride) we must populate elevation state here
     // since allPoints hasn't changed. For planner routes, the elevation useEffect will
-    // re-run from cache when isWalkPreview returns to false — no override needed here.
+    // re-run from cache when isWalkPreview returns to false � no override needed here.
     if (pointsOverride) {
       setTimeout(() => {
         if (walkPreviewAbortRef.current) return;
@@ -898,7 +897,7 @@ export function MapShell() {
       }, 800);
     }
 
-    // Phase 1: Overhead view â€” pull back for context
+    // Phase 1: Overhead view — pull back for context
     mapInstance.flyTo({ center: [densePoints[0].lng, densePoints[0].lat], zoom: 13.5, pitch: 50, bearing: startBearing, duration: 2500, essential: true });
     // Phase 2: Zoom in to chase-cam altitude, then start rAF
     mapInstance.once('moveend', () => {
@@ -978,7 +977,7 @@ export function MapShell() {
       map.setTerrain({ source: 'mapbox-dem', exaggeration: 1 });
     }
     if (!map.hasImage('route-arrow')) {
-      // ── Arrow image ─────────────────────────────────────────────────────
+      // -- Arrow image -----------------------------------------------------
       // Draw a right-pointing filled arrowhead on an offscreen canvas, then
       // add it as an SDF image so `icon-color` can tint it at render time.
       const size = 22;
@@ -1002,7 +1001,7 @@ export function MapShell() {
 
   }, []);
 
-  // ── Route balls ───────────────────────────────────────────────────────────
+  // -- Route balls -----------------------------------------------------------
   // Sample displayPoints at even intervals for the interactive ball layer.
   // Stores bearing + hasArrow so the arrow symbol layer can filter/rotate inline.
   const routeBallPoints = useMemo<GeoJSON.FeatureCollection<GeoJSON.Point> | null>(() => {
@@ -1035,7 +1034,7 @@ export function MapShell() {
   }, [displayPoints, ballTuning.spacingM, ballTuning.arrowEveryN]);
 
   // Insert a mid-route control point at the clicked ball's position.
-  // Marks the underlying point as a control point without moving it — the route
+  // Marks the underlying point as a control point without moving it � the route
   // doesn't change visually, but a draggable handle appears.
   const insertMidRouteControlPoint = useCallback((displayIdx: number) => {
     const pt = displayPoints[displayIdx];
@@ -1062,7 +1061,7 @@ export function MapShell() {
   }, [displayPoints, legs, commit]);
 
   // Drag an existing control point to reroute. Re-snaps the two flanking
-  // segments (prevCP→newPos and newPos→nextCP) in the same leg.
+  // segments (prevCP?newPos and newPos?nextCP) in the same leg.
   const handleControlPointDragEnd = useCallback(async (
     allPtIdx: number,
     newLng: number,
@@ -1264,8 +1263,8 @@ export function MapShell() {
     }
   }, [legs, activeSegmentId, snapToPath, commit]);
 
-  // Ball hover — track hovered feature ID and update Mapbox feature state.
-  const handleBallMouseMove = useCallback((e: MapLayerMouseEvent) => {
+  // Ball hover � track hovered feature ID and update Mapbox feature state.
+  const handleBallMouseMove = useCallback((e: MapMouseEvent) => {
     const map = mapRef.current?.getMap();
     if (!map || !map.getLayer('route-balls')) return;
     const features = map.queryRenderedFeatures(e.point, { layers: ['route-balls'] });
@@ -1313,7 +1312,7 @@ export function MapShell() {
   );
 
   const handleMapClick = useCallback(
-    async (e: MapLayerMouseEvent) => {
+    async (e: MapMouseEvent) => {
       if (mode !== 'planner') return;
       if (isFlyby) return;
       if (isWalkPreview) { if (!walkPausedRef.current) pauseWalkPreview(); return; }
@@ -1325,7 +1324,7 @@ export function MapShell() {
       }
       if (isLoop) return;
       // If a ball was clicked, insert a mid-route control point instead of appending
-      const ballFeature = e.features?.find(f => f.layer.id === 'route-balls');
+      const ballFeature = e.features?.find((f: { layer?: { id?: string } }) => f.layer?.id === 'route-balls');
       if (ballFeature) {
         const idx = ballFeature.properties?.idx as number | undefined;
         if (idx !== undefined) insertMidRouteControlPoint(idx);
@@ -1420,7 +1419,7 @@ export function MapShell() {
     setActiveSegmentId(newId);
   }, [resetLegs]);
 
-  // Reverse: flip all points so start â†” end; mirror turnaround index if set
+  // Reverse: flip all points so start ↔ end; mirror turnaround index if set
   const handleReverse = useCallback(() => {
     if (turnaroundIdx !== null) {
       setTurnaroundIdx(allPoints.length - 1 - turnaroundIdx);
@@ -1498,7 +1497,7 @@ export function MapShell() {
 
   return (
     <div className="absolute inset-0 pointer-events-auto">
-      {/* â”€â”€ Single map instance â€” never unmounts â”€â”€ */}
+      {/* ── Single map instance — never unmounts ── */}
       <Map
         ref={mapRef}
         mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
@@ -1528,7 +1527,7 @@ export function MapShell() {
           </Source>
         )}
 
-        {/* â”€â”€ Elevation chart range highlight â”€â”€ */}
+        {/* ── Elevation chart range highlight ── */}
         {mode === 'planner' && chartRange !== null && chartRange.end < elevationPoints.length && (
           <Source
             id="elevation-range"
@@ -1539,7 +1538,7 @@ export function MapShell() {
           </Source>
         )}
 
-        {/* ── Activity GPS track ── */}
+        {/* -- Activity GPS track -- */}
         {mode === 'activity' && activityTrack.length > 1 && (
           <Source id="activity-track" type="geojson" data={toGeoJSON(activityTrack)}>
             <Layer {...routeOutlineLayer} />
@@ -1559,7 +1558,7 @@ export function MapShell() {
           />
         )}
 
-        {/* â”€â”€ Route endpoint markers â”€â”€ */}
+        {/* ── Route endpoint markers ── */}
         {mode === 'planner' && (() => {
           // Collect middle control points (exclude first and last)
           const ctrlPts: { point: Point; index: number; allPtIdx: number }[] = [];
@@ -1652,7 +1651,7 @@ export function MapShell() {
               onMouseLeave={() => setHoveredPoiIdx(null)}
               className="w-6 h-6 rounded-full bg-white border-2 border-active shadow flex items-center justify-center text-[11px] leading-none cursor-pointer hover:scale-110 transition-transform"
             >
-              {PLACE_TYPE_META[poi.type as keyof typeof PLACE_TYPE_META]?.emoji ?? '📍'}
+              {PLACE_TYPE_META[poi.type as keyof typeof PLACE_TYPE_META]?.emoji ?? '??'}
             </div>
           </Marker>
         ))}
@@ -1670,7 +1669,7 @@ export function MapShell() {
               onClose={() => setHoveredPoiIdx(null)}
             >
               <div className="flex items-start gap-2 py-1 px-0.5 min-w-35 max-w-50">
-                <span className="text-lg leading-none shrink-0 mt-0.5">{meta?.emoji ?? '📍'}</span>
+                <span className="text-lg leading-none shrink-0 mt-0.5">{meta?.emoji ?? '??'}</span>
                 <div className="min-w-0">
                   <p className="text-xs font-semibold text-gray-800 leading-tight">
                     {poi.name || meta?.label || poi.type}
@@ -1718,7 +1717,7 @@ export function MapShell() {
         )}
       </Map>
 
-      {/* â”€â”€ Mode overlays (UI panels on top of map) â”€â”€ */}
+      {/* ── Mode overlays (UI panels on top of map) ── */}
       <div className="absolute inset-0 pointer-events-none">
         {mode === 'explore' && !isWalkPreview && (
           <ExploreOverlay
@@ -1802,7 +1801,7 @@ export function MapShell() {
           />
         )}
 
-        {/* ── Ball hover tooltip ── */}
+        {/* -- Ball hover tooltip -- */}
         {mode === 'planner' && hoveredBallTooltip && (
           <div
             className="pointer-events-none absolute z-50 -translate-x-1/2 -translate-y-full"
@@ -1817,14 +1816,14 @@ export function MapShell() {
           </div>
         )}
 
-        {/* ── Preview buttons overlay ── removed: now inside toolbar */}
+        {/* -- Preview buttons overlay -- removed: now inside toolbar */}
 
       </div>
     </div>
   );
 }
 
-// â”€â”€ Route markers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Route markers ─────────────────────────────────────────────────────────────
 
 /** Start marker: white circle, green border, play triangle. */
 function StartMarker() {
@@ -1843,7 +1842,7 @@ function StartMarker() {
         pointerEvents: 'none',
       }}
     >
-      {/* Play triangle â€” offset 1px right for optical centering */}
+      {/* Play triangle — offset 1px right for optical centering */}
       <svg
         viewBox="0 0 24 24"
         width={14}
@@ -1890,7 +1889,7 @@ function EndMarker() {
 
 /**
  * Loop marker: shown at the start/end node when the route is a closed loop.
- * White circle with both green â–¶ and red â–  icons side by side.
+ * White circle with both green ▶ and red ■ icons side by side.
  */
 function LoopMarker() {
   return (
@@ -2060,7 +2059,7 @@ function FlybyHUD({
   return (
     <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-end pb-10">
       <div className="pointer-events-auto flex flex-col items-center gap-3">
-        {/* Progress dots â€” one per control point */}
+        {/* Progress dots — one per control point */}
         <div className="flex items-center gap-2">
           {Array.from({ length: totalSteps }).map((_, i) => (
             <div
@@ -2144,7 +2143,7 @@ function WalkPreviewHUD({
 }: {
   elevationPoints: Point[];
   elevations: number[];
-  progress: number; // 0â€“1
+  progress: number; // 0–1
   isPaused: boolean;
   speed: number;
   onSeek: (t: number) => void;
@@ -2213,7 +2212,7 @@ function WalkPreviewHUD({
     return pts[pts.length - 1].y;
   }, [chartData, progress]);
 
-  // Invert Yâ†’elevation for the altitude readout
+  // Invert Y→elevation for the altitude readout
   const currentElev = useMemo(() => {
     if (!chartData) return null;
     return Math.round(((VB_H - PAD_BOTTOM - cursorY) / chartH) * (chartData.maxElev - chartData.minElev) + chartData.minElev);
@@ -2249,7 +2248,7 @@ function WalkPreviewHUD({
       <div className="pointer-events-auto w-full max-w-3xl mx-auto px-4 pb-5">
         <div className="bg-black/85 backdrop-blur-sm rounded-2xl overflow-hidden border border-white/10 shadow-2xl">
 
-          {/* ── Header: title + route stats + exit ── */}
+          {/* -- Header: title + route stats + exit -- */}
           <div className="flex items-center justify-between px-4 pt-3 pb-2.5 border-b border-white/8">
             <div className="flex items-center gap-2 min-w-0">
               <svg viewBox="0 0 24 24" className="w-4 h-4 text-white/55 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -2260,7 +2259,7 @@ function WalkPreviewHUD({
               <span className="text-white font-semibold text-sm">Route preview</span>
               {distLabel && (
                 <span className="text-white/35 text-xs tabular-nums truncate">
-                  {distLabel}{chartData && chartData.elevGain > 0 ? ` · +${chartData.elevGain} m` : ''}
+                  {distLabel}{chartData && chartData.elevGain > 0 ? ` � +${chartData.elevGain} m` : ''}
                 </span>
               )}
             </div>
@@ -2275,7 +2274,7 @@ function WalkPreviewHUD({
             </button>
           </div>
 
-          {/* ── Elevation chart with dedicated Y-axis and altitude readout ── */}
+          {/* -- Elevation chart with dedicated Y-axis and altitude readout -- */}
           <div className="flex items-stretch pt-2">
 
             {/* Y-axis column */}
@@ -2338,7 +2337,7 @@ function WalkPreviewHUD({
 
           </div>
 
-          {/* ── YouTube-style thin progress bar ── */}
+          {/* -- YouTube-style thin progress bar -- */}
           <div className="pl-14 pr-16 pt-2 pb-1">
             <div
               ref={barRef}
@@ -2365,7 +2364,7 @@ function WalkPreviewHUD({
             </div>
           </div>
 
-          {/* ── Playback controls ── */}
+          {/* -- Playback controls -- */}
           <div className="flex items-center justify-center border-t border-white/8 px-4 py-3 gap-2">
 
             <div className="flex items-center gap-1.5">

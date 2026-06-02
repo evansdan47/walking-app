@@ -555,7 +555,7 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
     const inProgress = walks.filter((w) => w.status === 'recording' || w.status === 'paused');
     const completed = walks.filter((w) => w.status === 'completed');
 
-    function renderGroup(group: typeof walks) {
+    function renderGroup(group: NonNullable<typeof walks>) {
       return group.map((walk) => (
         <WalkRow
           key={walk._id}
