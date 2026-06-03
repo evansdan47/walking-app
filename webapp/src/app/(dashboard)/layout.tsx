@@ -1,6 +1,10 @@
-import { DashboardHeader } from '@/components/dashboard-header';
-import { PaceProvider } from '@/components/pace-context';
-import { PreviewProvider } from '@/components/preview-context';
+import { DashboardHeader } from "@/components/dashboard-header";
+import { PaceProvider } from "@/components/pace-context";
+import { PreviewProvider } from "@/components/preview-context";
+import { noIndexMetadata } from "@/lib/metadata";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = noIndexMetadata;
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (

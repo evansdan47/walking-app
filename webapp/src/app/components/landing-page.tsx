@@ -1,6 +1,7 @@
+import { NavAuthButtons } from "@/components/nav-auth-buttons";
+import { LANDING_SEO } from "@/lib/seo-content";
 import Image from "next/image";
 import Link from "next/link";
-import { NavAuthButtons } from "@/components/nav-auth-buttons";
 import { HeroCarousel } from "./hero-carousel";
 
 // ── Nav ────────────────────────────────────────────────────────────────────
@@ -62,6 +63,11 @@ function HeroSection() {
 export function LandingPage() {
   return (
     <div className="min-h-screen flex flex-col">
+      {/* Server-rendered copy for crawlers and screen readers (hero carousel is client-only). */}
+      <div className="sr-only">
+        <h1>{LANDING_SEO.h1}</h1>
+        <p>{LANDING_SEO.intro}</p>
+      </div>
       <HeroSection />
     </div>
   );
