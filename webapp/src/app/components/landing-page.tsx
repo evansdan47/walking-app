@@ -34,10 +34,10 @@ function HeroSection() {
       <div className="absolute top-0 left-0 right-0 z-30">
         <Navbar />
       </div>
-      {/* ── Beta notice ── */}
-      <div className="absolute bottom-10 left-0 right-0 z-30">
-        <div className="max-w-7xl mx-auto px-6 flex justify-end">
-          <div className="max-w-xs backdrop-blur-md bg-white/10 border border-white/20 rounded-2xl px-5 py-4 shadow-lg">
+      {/* ── Beta notice (pointer-events only on the card — not the full-width row) ── */}
+      <div className="absolute bottom-10 left-0 right-0 z-30 pointer-events-none">
+        <div className="max-w-7xl mx-auto flex justify-end px-6">
+          <div className="max-w-xs pointer-events-auto backdrop-blur-md bg-white/10 border border-white/20 rounded-2xl px-5 py-4 shadow-lg">
             <p className="text-xs font-bold uppercase tracking-widest text-white/60 mb-1">Closed Beta</p>
             <p className="text-sm text-white leading-snug mb-3">
               Rambleio is currently in closed beta. Sign up to our newsletter to receive updates on our progress and find out how you can get involved.

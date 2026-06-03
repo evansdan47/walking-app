@@ -65,3 +65,174 @@ input, textarea, [contenteditable] {
 .mapboxgl-popup-anchor-bottom .mapboxgl-popup-tip {
   border-top-color: rgba(255, 255, 255, 0.72) !important;
 }
+
+/* ── Hero carousel — Ken Burns background motion ─────────────────────────── */
+.hero-kb-frame {
+  position: absolute;
+  z-index: 0;
+  /* Overscan so pan/zoom never reveals empty edges */
+  width: 118%;
+  height: 118%;
+  left: -9%;
+  top: -9%;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  animation-iteration-count: 1;
+  will-change: transform;
+}
+
+.hero-kb-idle {
+  transform: scale(1.06) translate(0, 0);
+}
+
+@keyframes hero-kb-zoom-in {
+  from {
+    transform: scale(1.04) translate(0, 0);
+  }
+  to {
+    transform: scale(1.12) translate(0, 0);
+  }
+}
+
+@keyframes hero-kb-zoom-out {
+  from {
+    transform: scale(1.12) translate(0, 0);
+  }
+  to {
+    transform: scale(1.04) translate(0, 0);
+  }
+}
+
+@keyframes hero-kb-pan-left {
+  from {
+    transform: scale(1.1) translate(2.5%, 0);
+  }
+  to {
+    transform: scale(1.1) translate(-2.5%, 0);
+  }
+}
+
+@keyframes hero-kb-pan-right {
+  from {
+    transform: scale(1.1) translate(-2.5%, 0);
+  }
+  to {
+    transform: scale(1.1) translate(2.5%, 0);
+  }
+}
+
+@keyframes hero-kb-pan-up {
+  from {
+    transform: scale(1.1) translate(0, 2%);
+  }
+  to {
+    transform: scale(1.1) translate(0, -2%);
+  }
+}
+
+@keyframes hero-kb-pan-down {
+  from {
+    transform: scale(1.1) translate(0, -2%);
+  }
+  to {
+    transform: scale(1.1) translate(0, 2%);
+  }
+}
+
+@keyframes hero-kb-zoom-pan-right {
+  from {
+    transform: scale(1.05) translate(-1.5%, 0.5%);
+  }
+  to {
+    transform: scale(1.14) translate(2%, -0.5%);
+  }
+}
+
+@keyframes hero-kb-zoom-pan-left {
+  from {
+    transform: scale(1.05) translate(1.5%, 0.5%);
+  }
+  to {
+    transform: scale(1.14) translate(-2%, -0.5%);
+  }
+}
+
+@keyframes hero-kb-drift-up-right {
+  from {
+    transform: scale(1.06) translate(-2%, 1.5%);
+  }
+  to {
+    transform: scale(1.11) translate(2%, -1.5%);
+  }
+}
+
+@keyframes hero-kb-drift-down-left {
+  from {
+    transform: scale(1.06) translate(2%, -1.5%);
+  }
+  to {
+    transform: scale(1.11) translate(-2%, 1.5%);
+  }
+}
+
+.hero-kb-zoom-in {
+  animation-name: hero-kb-zoom-in;
+}
+.hero-kb-zoom-out {
+  animation-name: hero-kb-zoom-out;
+}
+.hero-kb-pan-left {
+  animation-name: hero-kb-pan-left;
+}
+.hero-kb-pan-right {
+  animation-name: hero-kb-pan-right;
+}
+.hero-kb-pan-up {
+  animation-name: hero-kb-pan-up;
+}
+.hero-kb-pan-down {
+  animation-name: hero-kb-pan-down;
+}
+.hero-kb-zoom-pan-right {
+  animation-name: hero-kb-zoom-pan-right;
+}
+.hero-kb-zoom-pan-left {
+  animation-name: hero-kb-zoom-pan-left;
+}
+.hero-kb-drift-up-right {
+  animation-name: hero-kb-drift-up-right;
+}
+.hero-kb-drift-down-left {
+  animation-name: hero-kb-drift-down-left;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-kb-frame[class*="hero-kb-"]:not(.hero-kb-idle) {
+    animation: none !important;
+    transform: scale(1.06) translate(0, 0);
+  }
+}
+
+/* Hero carousel — active slide progress pill */
+@keyframes hero-carousel-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.hero-carousel-progress {
+  animation-name: hero-carousel-progress;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  transform-origin: left center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-carousel-progress {
+    animation: none !important;
+    transform: scaleX(1);
+  }
+}

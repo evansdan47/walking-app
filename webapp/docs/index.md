@@ -8,6 +8,7 @@ Each entry below links to a doc file covering the design, rationale, and impleme
 
 | Subject | File | Summary |
 |---------|------|---------|
+| SEO & metadata | [metadata/README.md](metadata/README.md) | Launch checklist, file map, and manual steps for search/social metadata |
 | Activity pace model | [activity-pace.md](activity-pace.md) | Tobler hiking function, per-activity profiles, gradient time estimation |
 | ActivityPicker component | [activity-picker.md](activity-picker.md) | Dropdown UI for activity selection; SVG icons; drives all time estimates |
 | ConfirmDialog component | [confirm-dialog.md](confirm-dialog.md) | Reusable modal for destructive-action confirmation; blocks map pointer events |
