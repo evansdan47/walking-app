@@ -7,6 +7,8 @@ import type { GeoJSONSource } from 'mapbox-gl';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Marker, Popup, Source, useMap } from 'react-map-gl/mapbox';
+import { RouteTagDisplay } from '@/components/tags/route-tag-display';
+import { PanelPacePicker } from '@/components/panel-pace-picker';
 import { usePace } from '@/components/pace-context';
 import { ACTIVITY_PROFILES, type ActivityPace } from '@/lib/activity-pace';
 import { usePanelWidth, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH, usePanelHeight, PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
@@ -31,6 +33,16 @@ interface PopupState {
   lng: number;
   lat: number;
   routes: EnrichedRoute[];
+}
+
+function isSamePopupState(
+  a: PopupState,
+  lng: number,
+  lat: number,
+  routes: EnrichedRoute[],
+): boolean {
+  if (a.lng !== lng || a.lat !== lat || a.routes.length !== routes.length) return false;
+  return a.routes.every((r, i) => r._id === routes[i]?._id);
 }
 
 // ── Geographic pre-clustering ────────────────────────────────────────────────
@@ -517,57 +529,6 @@ function RoutePopupItem({
   );
 }
 
-// ── Pin hover tooltip — shown on circle mouseenter ────────────────────────
-
-function PinHoverTooltip({ group, topIdx }: { group: RouteGroup; topIdx: number }) {
-  return (
-    <div className="py-1 pointer-events-none" style={{ minWidth: 260, maxWidth: 360 }}>
-      {group.routes.map((route, i) => {
-        const dist = route.stats?.distanceKm ?? 0;
-        const elev = route.stats?.elevationGainM ?? 0;
-        const diff = difficultyLevel(dist, elev);
-        const netMetH = calcNetMetHours(dist, elev);
-        const routeColor = route.legs[0]?.color ?? '#E65100';
-        const isTop = i === topIdx;
-        return (
-          <div
-            key={route._id}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors ${
-              isTop ? 'bg-orange-50' : ''
-            }`}
-          >
-            {/* Fixed-size dot — ring colour signals active, opacity signals inactive */}
-            <div
-              className={`shrink-0 w-3 h-3 rounded-full ring-2 ring-white shadow-sm transition-opacity ${
-                isTop ? 'opacity-100' : 'opacity-40'
-              }`}
-              style={{ backgroundColor: routeColor }}
-            />
-            <div className={`flex-1 min-w-0 transition-opacity ${isTop ? 'opacity-100' : 'opacity-50'}`}>
-              <p className={`leading-snug text-xs ${isTop ? 'font-bold text-gray-900' : 'font-medium text-gray-600'}`}>
-                {route.title}
-              </p>
-              <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                <span
-                  className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded text-white shrink-0"
-                  style={{ backgroundColor: diff.color }}
-                >
-                  {diff.label}
-                </span>
-                <span className="text-[10px] text-gray-500">{dist > 0 ? fmtDist(dist) : '—'}</span>
-                <span className="text-[10px] text-gray-400">·</span>
-                <span className="text-[10px] text-gray-500">{elev > 0 ? `+${Math.round(elev)} m` : '—'}</span>
-                <span className="text-[10px] text-gray-400">·</span>
-                <span className="text-[10px] text-gray-500">{dist > 0 ? `${netMetH.toFixed(1)} MET·h` : '—'}</span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // ── ExploreMapLayers — rendered INSIDE <Map> ─────────────────────────────────
 
 interface ExploreMapLayersProps {
@@ -601,6 +562,14 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
   const geoJSON = useMemo(() => groupsToGeoJSON(groups), [groups]);
 
   const [popup, setPopup] = useState<PopupState | null>(null);
+  const popupRef = useRef<PopupState | null>(null);
+  popupRef.current = popup;
+
+  const toggleRoutePopupRef = useRef((lng: number, lat: number, routes: EnrichedRoute[]) => {
+    void lng;
+    void lat;
+    void routes;
+  });
 
   // ── Route line cache — avoids recomputing GeoJSON for the same route ──────
   const routeLineCacheRef = useRef<Map<string, FeatureCollection<LineString>>>(new Map());
@@ -619,15 +588,34 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
   const [popupRouteHover, setPopupRouteHover] = useState<EnrichedRoute | null>(null);
   const popupRouteHoverRef = useRef<EnrichedRoute | null>(null);
 
+  toggleRoutePopupRef.current = (lng, lat, routes) => {
+    const current = popupRef.current;
+    if (current && isSamePopupState(current, lng, lat, routes)) {
+      setPopup(null);
+      setPopupRouteHover(null);
+      popupRouteHoverRef.current = null;
+      return;
+    }
+    pinHoverRef.current = null;
+    setPinHover(null);
+    setPopupRouteHover(null);
+    popupRouteHoverRef.current = null;
+    setPopup({ lng, lat, routes });
+  };
+
   // ── Z-order cycling — rotates which route renders last (on top) ─────────
   // Only active when hovering a multi-route pin without a popup-item override.
   const [cycleIdx, setCycleIdx] = useState(0);
   useEffect(() => {
-    const isMulti = pinHover !== null && pinHover.group.routes.length > 1 && !popupRouteHover;
+    const isMulti =
+      pinHover !== null &&
+      pinHover.group.routes.length > 1 &&
+      !popupRouteHover &&
+      popup === null;
     if (!isMulti) { setCycleIdx(0); return; }
     const id = setInterval(() => setCycleIdx((n) => n + 1), 1000);
     return () => clearInterval(id);
-  }, [pinHover, popupRouteHover]);
+  }, [pinHover, popupRouteHover, popup]);
 
   // ── Elevation sampling for selected route ─────────────────────────────────
   // Sample terrain heights for each route point so the info panel can render
@@ -714,6 +702,12 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
     baseLines: FeatureCollection<LineString>;
     topLine: FeatureCollection<LineString>;
   }>(() => {
+    if (popup) {
+      if (popupRouteHover) {
+        return { baseLines: EMPTY_FC, topLine: getCachedLine(popupRouteHover) };
+      }
+      return { baseLines: EMPTY_FC, topLine: EMPTY_FC };
+    }
     if (popupRouteHover) {
       return { baseLines: EMPTY_FC, topLine: getCachedLine(popupRouteHover) };
     }
@@ -734,7 +728,7 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
     }
     if (selectedRoute) return { baseLines: EMPTY_FC, topLine: getCachedLine(selectedRoute) };
     return { baseLines: EMPTY_FC, topLine: EMPTY_FC };
-  }, [popupRouteHover, pinHover, cycleIdx, selectedRoute, getCachedLine]);
+  }, [popup, popupRouteHover, pinHover, cycleIdx, selectedRoute, getCachedLine]);
 
   // Layer-specific click + cursor handlers
   useEffect(() => {
@@ -742,6 +736,7 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
     const mapbox = map.getMap();
 
     const onClusterClick = (e: mapboxgl.MapLayerMouseEvent) => {
+      e.originalEvent.stopPropagation();
       const feature = e.features?.[0];
       if (!feature || feature.geometry.type !== 'Point') return;
       const clusterId = feature.properties?.cluster_id as number;
@@ -760,7 +755,7 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
               return groupsRef.current[gid]?.routes ?? [];
             });
             if (clusterRoutes.length > 0) {
-              setPopup({ lng, lat, routes: clusterRoutes });
+              toggleRoutePopupRef.current(lng, lat, clusterRoutes as EnrichedRoute[]);
             }
           });
         } else {
@@ -770,6 +765,7 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
     };
 
     const onPinClick = (e: mapboxgl.MapLayerMouseEvent) => {
+      e.originalEvent.stopPropagation();
       const feature = e.features?.[0];
       if (!feature || feature.geometry.type !== 'Point') return;
       const gid = feature.properties?.groupId as number;
@@ -781,14 +777,18 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
         // not fire on a click, leaving a stale hover line after the panel closes.
         pinHoverRef.current = null;
         setPinHover(null);
+        setPopup(null);
+        setPopupRouteHover(null);
+        popupRouteHoverRef.current = null;
         onRouteSelectRef.current(group.routes[0] as EnrichedRoute);
       } else {
-        setPopup({ lng, lat, routes: group.routes as EnrichedRoute[] });
+        toggleRoutePopupRef.current(lng, lat, group.routes as EnrichedRoute[]);
       }
     };
 
     const onPinMouseEnter = (e: mapboxgl.MapLayerMouseEvent) => {
       mapbox.getCanvas().style.cursor = 'pointer';
+      if (popupRef.current) return;
       const feature = e.features?.[0];
       if (!feature || feature.geometry.type !== 'Point') return;
       const gid = feature.properties?.groupId as number;
@@ -811,19 +811,27 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
     const cursorOff = () => { mapbox.getCanvas().style.cursor = ''; };
 
     mapbox.on('click', 'explore-clusters', onClusterClick);
+    mapbox.on('click', 'explore-cluster-count', onClusterClick);
     mapbox.on('click', 'explore-unclustered-point', onPinClick);
+    mapbox.on('click', 'explore-unclustered-count', onPinClick);
     mapbox.on('mouseenter', 'explore-clusters', cursorOn);
     mapbox.on('mouseleave', 'explore-clusters', cursorOff);
     mapbox.on('mouseenter', 'explore-unclustered-point', onPinMouseEnter);
     mapbox.on('mouseleave', 'explore-unclustered-point', onPinMouseLeave);
+    mapbox.on('mouseenter', 'explore-unclustered-count', onPinMouseEnter);
+    mapbox.on('mouseleave', 'explore-unclustered-count', onPinMouseLeave);
 
     return () => {
       mapbox.off('click', 'explore-clusters', onClusterClick);
+      mapbox.off('click', 'explore-cluster-count', onClusterClick);
       mapbox.off('click', 'explore-unclustered-point', onPinClick);
+      mapbox.off('click', 'explore-unclustered-count', onPinClick);
       mapbox.off('mouseenter', 'explore-clusters', cursorOn);
       mapbox.off('mouseleave', 'explore-clusters', cursorOff);
       mapbox.off('mouseenter', 'explore-unclustered-point', onPinMouseEnter);
       mapbox.off('mouseleave', 'explore-unclustered-point', onPinMouseLeave);
+      mapbox.off('mouseenter', 'explore-unclustered-count', onPinMouseEnter);
+      mapbox.off('mouseleave', 'explore-unclustered-count', onPinMouseLeave);
     };
   }, [map]);
 
@@ -936,31 +944,21 @@ export function ExploreMapLayers({ viewBounds, selectedRoute, onRouteSelect, ele
         />
       </Source>
 
-      {/* Pin hover tooltip — only shown when no click popup is open */}
-      {pinHover && !popup && (
-        <Popup
-          longitude={pinHover.lng}
-          latitude={pinHover.lat}
-          anchor="bottom"
-          closeButton={false}
-          closeOnClick={false}
-          offset={16}
-        >
-          <PinHoverTooltip
-            group={pinHover.group}
-            topIdx={pinHover.group.routes.length > 1 ? cycleIdx % pinHover.group.routes.length : 0}
-          />
-        </Popup>
-      )}
-
       {/* Click popup — route selection for multi-route pins */}
       {popup && (
         <Popup
           longitude={popup.lng}
           latitude={popup.lat}
           anchor="bottom"
-          onClose={() => setPopup(null)}
+          onClose={() => {
+            setPopup(null);
+            setPopupRouteHover(null);
+            popupRouteHoverRef.current = null;
+          }}
           closeButton={false}
+          closeOnClick={false}
+          closeOnMove={false}
+          offset={20}
           maxWidth="360px"
         >
           <div className="py-1 min-w-72">
@@ -1466,6 +1464,7 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
               <VisibilityBadge visibility={route.visibility} />
             </div>
           </div>
+          <PanelPacePicker />
         </div>
 
         {/* Rating + difficulty strip */}
@@ -1542,6 +1541,12 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
               <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">Est. time</p>
             </div>
           </div>
+
+          {/* Route tags */}
+          <RouteTagDisplay
+            plannedRouteId={route._id}
+            className="px-4 py-4 border-b border-gray-100"
+          />
 
           {/* Photos */}
           <div className="px-4 pt-4 pb-3 border-b border-gray-100">

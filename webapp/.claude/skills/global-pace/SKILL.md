@@ -21,7 +21,8 @@ There is only one pace at a time; changing it instantly updates all panels.
 |-------|------|------|
 | State | `src/components/pace-context.tsx` | React context + `localStorage` persistence |
 | Provider | `src/app/(dashboard)/layout.tsx` | Wraps the whole dashboard in `<PaceProvider>` |
-| Picker UI | `src/components/dashboard-header.tsx` | `<ActivityPicker>` in the global nav bar |
+| Picker UI | `src/components/panel-pace-picker.tsx` | `<PanelPacePicker>` in panels that show est. time |
+| Panel hosts | `planner-overlay.tsx`, `explore-overlay.tsx` | Header of custom route card / selected route panel |
 | Consumer (planner) | `src/components/map/planner-overlay.tsx` | Reads `usePace()` for per-segment time calc |
 | Consumer (explore) | `src/components/map/explore-overlay.tsx` | Reads `usePace()` in `SelectedRoutePanel` |
 

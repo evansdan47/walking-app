@@ -57,27 +57,59 @@ const SLIDES = [
 ];
 
 const TEXT_FADE_MS = 250;
-const SLIDE_CROSSFADE_MS = 700;
+/** Image crossfade — longer than text fade for a smooth dissolve. */
+const SLIDE_CROSSFADE_MS = 1000;
 
 export function HeroCarousel() {
   const [current, setCurrent] = useState(0);
   const [timerKey, setTimerKey] = useState(0);
   const [textVisible, setTextVisible] = useState(true);
   const [isPlaying, setIsPlaying] = useState(true);
-  /** Deterministic on first paint — avoids SSR/client hydration mismatch from Math.random(). */
-  const [kenBurnsEffect, setKenBurnsEffect] = useState<HeroKenBurnsEffect>(
-    HERO_KEN_BURNS_EFFECTS[0],
+  /** Per-slide effect — avoids swapping classes on the outgoing slide (which caused transform snap). */
+  const [effectsBySlide, setEffectsBySlide] = useState<HeroKenBurnsEffect[]>(() =>
+    SLIDES.map((_, i) =>
+      i === 0 ? HERO_KEN_BURNS_EFFECTS[0] : HERO_KEN_BURNS_EFFECTS[0],
+    ),
   );
+  /** Pause Ken Burns during opacity crossfade so only dissolve is visible. */
+  const [isCrossfading, setIsCrossfading] = useState(false);
   const slideStartedAtRef = useRef(Date.now());
+  const crossfadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const advanceTo = useCallback((index: number | ((prev: number) => number)) => {
     setTextVisible(false);
-    setTimeout(() => {
-      setKenBurnsEffect((prev) => pickHeroKenBurnsEffect(prev));
-      setCurrent(index);
-      setTextVisible(true);
-    }, TEXT_FADE_MS);
+
+    if (crossfadeTimeoutRef.current) {
+      clearTimeout(crossfadeTimeoutRef.current);
+    }
+
+    setCurrent((c) => {
+      const next = typeof index === 'function' ? index(c) : index;
+      if (next !== c) {
+        setIsCrossfading(true);
+        setEffectsBySlide((effects) => {
+          const copy = [...effects];
+          copy[next] = pickHeroKenBurnsEffect(effects[next]);
+          return copy;
+        });
+        crossfadeTimeoutRef.current = setTimeout(() => {
+          setIsCrossfading(false);
+          crossfadeTimeoutRef.current = null;
+        }, SLIDE_CROSSFADE_MS);
+      }
+      return next;
+    });
+
+    setTimeout(() => setTextVisible(true), TEXT_FADE_MS);
     setTimerKey((k) => k + 1);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (crossfadeTimeoutRef.current) {
+        clearTimeout(crossfadeTimeoutRef.current);
+      }
+    };
   }, []);
 
   const prev = useCallback(() => {
@@ -105,9 +137,8 @@ export function HeroCarousel() {
   }, [timerKey, isPlaying, advanceTo, current]);
 
   const slide = SLIDES[current];
-  const motionKey = `${current}-${kenBurnsEffect}`;
   const progressKey = `${current}-${timerKey}`;
-  const motionPlayState = isPlaying ? 'running' : 'paused';
+  const kenBurnsRunning = isPlaying && !isCrossfading;
 
   return (
     <div className="relative isolate w-full h-full">
@@ -116,34 +147,29 @@ export function HeroCarousel() {
       <div className="absolute inset-0 z-0 overflow-hidden isolate">
         {SLIDES.map((s, i) => {
           const isActive = i === current;
+          const effect = effectsBySlide[i]!;
+          const runKenBurns = isActive && kenBurnsRunning;
+
           return (
             <div
               key={s.src}
               className={`absolute inset-0 overflow-hidden transition-opacity ease-in-out ${
-                isActive ? 'opacity-100' : 'opacity-0 pointer-events-none'
+                isActive ? 'opacity-100 z-[1]' : 'opacity-0 z-0 pointer-events-none'
               }`}
               style={{ transitionDuration: `${SLIDE_CROSSFADE_MS}ms` }}
               aria-hidden={!isActive}
             >
               <div
-                key={isActive ? motionKey : `${i}-idle`}
-                className={
-                  isActive
-                    ? `hero-kb-frame ${heroKenBurnsClass(kenBurnsEffect)}`
-                    : 'hero-kb-frame hero-kb-idle'
-                }
-                style={
-                  isActive
-                    ? {
-                        animationDuration: `${HERO_SLIDE_INTERVAL_MS}ms`,
-                        animationPlayState: motionPlayState,
-                      }
-                    : undefined
-                }
+                key={`${i}-${effect}`}
+                className={`hero-kb-frame ${heroKenBurnsClass(effect)}`}
+                style={{
+                  animationDuration: `${HERO_SLIDE_INTERVAL_MS}ms`,
+                  animationPlayState: runKenBurns ? 'running' : 'paused',
+                }}
               >
                 <Image
                   src={s.src}
-                  alt={s.label}
+                  alt={isActive ? s.label : ''}
                   fill
                   className="object-cover"
                   sizes="100vw"

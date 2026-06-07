@@ -1,9 +1,15 @@
 'use client';
 
+import type { ActivityWalkPhoto } from '@/components/activity/activity-walk-photo';
+import { WalkActivityCard, type WalkCardEnrichment } from '@/components/activity/walk-activity-card';
+import { WalkPhotoViewerModal } from '@/components/activity/walk-photo-viewer-modal';
+
+export type { ActivityWalkPhoto };
+import { WalkTaggingPrompt } from '@/components/tags/walk-tagging-prompt';
 import { CollapsibleSidePanel } from '@/components/ui/collapsible-side-panel';
 import { api } from '@convex/_generated/api';
-import type { Id } from '@convex/_generated/dataModel';
-import { useQuery } from 'convex/react';
+import type { Doc, Id } from '@convex/_generated/dataModel';
+import { useMutation, useQuery } from 'convex/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExploreElevationProfile } from './explore-overlay';
 import type { Point } from './planner-overlay';
@@ -25,6 +31,11 @@ interface ActivityOverlayProps {
   onFitBounds: (bounds: { minLat: number; maxLat: number; minLng: number; maxLng: number }) => void;
   /** Called when the user hovers the elevation chart. */
   onElevHoverIdx: (idx: number | null) => void;
+  /** Called when walk photos load or clear (for map markers). */
+  onPhotosChange: (photos: ActivityWalkPhoto[]) => void;
+  /** Hovered photo — synced between gallery and map markers. */
+  photoHoverId: Id<'walkPhotos'> | null;
+  onPhotoHover: (id: Id<'walkPhotos'> | null) => void;
 }
 
 // ── Formatting helpers ─────────────────────────────────────────────────────────
@@ -32,14 +43,6 @@ interface ActivityOverlayProps {
 function formatDate(ts: number) {
   return new Date(ts).toLocaleDateString('en-GB', {
     weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-  });
-}
-
-function formatDateShort(ts: number) {
-  return new Date(ts).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -64,6 +67,19 @@ function formatPace(secsPerKm: number) {
   const m = Math.floor(secsPerKm / 60);
   const s = Math.round(secsPerKm % 60);
   return `${m}:${String(s).padStart(2, '0')} /km`;
+}
+
+function formatPhotoClockTime(ts: number) {
+  return new Date(ts).toLocaleTimeString('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatElapsedFromStart(walkStartedAt: number, photoTs: number) {
+  const secs = Math.max(0, Math.round((photoTs - walkStartedAt) / 1000));
+  return formatDuration(secs);
 }
 
 // ── Geometry helpers ───────────────────────────────────────────────────────────
@@ -102,110 +118,157 @@ function WalkListSkeleton() {
   );
 }
 
-interface WalkRowProps {
-  walk: {
-    _id: Id<'walks'>;
-    title?: string;
-    startedAt: number;
-    status: string;
-    stats?: {
-      distanceMetres: number;
-      durationSeconds: number;
-      avgPaceSecsPerKm?: number;
-      elevationGainMetres?: number;
-    };
-  };
-  isHovered: boolean;
-  onMouseEnter: () => void;
-  onMouseLeave: () => void;
-  onClick: () => void;
-}
-
-function WalkRow({ walk, isHovered, onMouseEnter, onMouseLeave, onClick }: WalkRowProps) {
-  const isInProgress = walk.status === 'recording' || walk.status === 'paused';
-  return (
-    <button
-      type="button"
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-      onClick={onClick}
-      className={`w-full text-left px-3 py-3 rounded-xl border transition-all group ${
-        isHovered
-          ? 'border-brand bg-brand/5 shadow-sm'
-          : 'border-gray-100 hover:border-gray-200 hover:bg-gray-50'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-2 min-w-0">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 min-w-0">
-            {isInProgress && (
-              <span className="shrink-0 w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            )}
-            <p className="text-sm font-semibold text-slate leading-tight truncate">
-              {walk.title ?? formatDate(walk.startedAt)}
-            </p>
-          </div>
-          {walk.title && (
-            <p className="text-[11px] text-slate-light mt-0.5">{formatDateShort(walk.startedAt)}</p>
-          )}
-        </div>
-        <svg
-          viewBox="0 0 24 24"
-          className="w-4 h-4 text-gray-300 shrink-0 mt-0.5 group-hover:text-brand transition-colors"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-        >
-          <path d="M9 18l6-6-6-6" />
-        </svg>
-      </div>
-      {walk.stats && (
-        <div className="flex flex-wrap gap-1.5 mt-2">
-          <span className="bg-orange-50 text-orange-700 font-medium px-2 py-0.5 rounded-full text-[11px]">
-            {formatDistance(walk.stats.distanceMetres)}
-          </span>
-          <span className="bg-gray-100 text-gray-500 font-medium px-2 py-0.5 rounded-full text-[11px]">
-            {formatDuration(walk.stats.durationSeconds)}
-          </span>
-          {walk.stats.avgPaceSecsPerKm != null && (
-            <span className="bg-blue-50 text-blue-600 font-medium px-2 py-0.5 rounded-full text-[11px]">
-              {formatPace(walk.stats.avgPaceSecsPerKm)}
-            </span>
-          )}
-        </div>
-      )}
-    </button>
-  );
-}
-
 // ── Detail panel ───────────────────────────────────────────────────────────────
 
 interface ActivityDetailProps {
   walkId: Id<'walks'>;
-  walk: {
-    title?: string;
-    startedAt: number;
-    endedAt?: number;
-    stats?: {
-      distanceMetres: number;
-      durationSeconds: number;
-      movingTimeSeconds: number;
-      stoppedTimeSeconds: number;
-      avgPaceSecsPerKm?: number;
-      elevationGainMetres?: number;
-      elevationLossMetres?: number;
-      pointCount: number;
-    };
-  };
+  walk: Pick<
+    Doc<'walks'>,
+    | 'title'
+    | 'startedAt'
+    | 'endedAt'
+    | 'stats'
+    | 'status'
+    | 'taggingCompletedAt'
+    | 'taggingSkipped'
+    | 'plannedRouteId'
+  >;
   track: TrackPoint[] | undefined;
+  photos: ActivityWalkPhoto[] | undefined;
+  photoHoverId: Id<'walkPhotos'> | null;
+  onPhotoHover: (id: Id<'walkPhotos'> | null) => void;
   onBack: () => void;
   onElevHoverIdx: (idx: number | null) => void;
   panelWidth: number;
   onWidthChange: (w: number) => void;
 }
 
-function ActivityDetail({ walk, track, onBack, onElevHoverIdx, panelWidth, onWidthChange }: ActivityDetailProps) {
+function WalkPhotoGallery({
+  photos,
+  walkStartedAt,
+  photoHoverId,
+  onPhotoHover,
+}: {
+  photos: ActivityWalkPhoto[] | undefined;
+  walkStartedAt: number;
+  photoHoverId: Id<'walkPhotos'> | null;
+  onPhotoHover: (id: Id<'walkPhotos'> | null) => void;
+}) {
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
+
+  if (photos === undefined) {
+    return (
+      <div>
+        <p className="text-[10px] text-slate-light uppercase tracking-wider mb-2 font-medium">Photography</p>
+        <div className="grid grid-cols-3 gap-2 animate-pulse">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="aspect-square rounded-lg bg-gray-100" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (photos.length === 0) {
+    return (
+      <div className="border-t border-gray-100 pt-3">
+        <p className="text-[10px] text-slate-light uppercase tracking-wider mb-2 font-medium">Photography</p>
+        <p className="text-xs text-gray-400">No photos recorded for this walk.</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+    <div className="border-t border-gray-100 pt-3">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[10px] text-slate-light uppercase tracking-wider font-medium">Photography</p>
+        <p className="text-[10px] text-gray-400">
+          {photos.length} photo{photos.length === 1 ? '' : 's'}
+        </p>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {photos.map((photo, photoIndex) => {
+          const isHovered = photoHoverId === photo._id;
+          return (
+            <button
+              key={photo._id}
+              type="button"
+              className={`group text-left rounded-lg overflow-hidden border transition-all ${
+                isHovered ? 'border-brand ring-2 ring-brand/30 shadow-sm' : 'border-gray-100 hover:border-gray-200'
+              }`}
+              onClick={() => setViewerIndex(photoIndex)}
+              onMouseEnter={() => onPhotoHover(photo._id)}
+              onMouseLeave={() => onPhotoHover(null)}
+              onFocus={() => onPhotoHover(photo._id)}
+              onBlur={() => onPhotoHover(null)}
+            >
+              <div className="aspect-square bg-gray-100 relative overflow-hidden">
+                {photo.url ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={photo.url}
+                    alt={photo.caption ?? 'Walk photo'}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center text-gray-300">
+                    <svg viewBox="0 0 24 24" className="w-8 h-8" fill="none" stroke="currentColor" strokeWidth="1.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a41.09 41.09 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+                    </svg>
+                  </div>
+                )}
+              </div>
+              <div className="px-1.5 py-1.5 bg-white">
+                <p className="text-[10px] font-semibold text-gray-700 tabular-nums">
+                  {formatPhotoClockTime(photo.timestamp)}
+                </p>
+                <p className="text-[9px] text-gray-400 tabular-nums">
+                  +{formatElapsedFromStart(walkStartedAt, photo.timestamp)}
+                </p>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+
+    <WalkPhotoViewerModal
+      open={viewerIndex !== null}
+      photos={photos}
+      initialIndex={viewerIndex ?? 0}
+      walkStartedAt={walkStartedAt}
+      onClose={() => {
+        setViewerIndex(null);
+        onPhotoHover(null);
+      }}
+      onActivePhotoChange={onPhotoHover}
+    />
+    </>
+  );
+}
+
+function ActivityDetail({
+  walkId,
+  walk,
+  track,
+  photos,
+  photoHoverId,
+  onPhotoHover,
+  onBack,
+  onElevHoverIdx,
+  panelWidth,
+  onWidthChange,
+}: ActivityDetailProps) {
   const stats = walk.stats;
+  const [taggingDismissed, setTaggingDismissed] = useState(false);
+  const showTaggingPrompt =
+    walk.status === 'completed' &&
+    !walk.taggingCompletedAt &&
+    !walk.taggingSkipped &&
+    !taggingDismissed;
 
   // ── Resize ─────────────────────────────────────────────────────────────
   const isDragging = useRef(false);
@@ -312,6 +375,7 @@ function ActivityDetail({ walk, track, onBack, onElevHoverIdx, panelWidth, onWid
   const duration = walk.endedAt ? walk.endedAt - walk.startedAt : null;
 
   return (
+    <>
     <div
       className={isMobile
         ? 'absolute bottom-0 left-0 right-0 z-10 pointer-events-auto bg-white rounded-t-xl shadow-xl overflow-hidden flex flex-col'
@@ -420,6 +484,13 @@ function ActivityDetail({ walk, track, onBack, onElevHoverIdx, panelWidth, onWid
           </div>
         )}
 
+        <WalkPhotoGallery
+          photos={photos}
+          walkStartedAt={walk.startedAt}
+          photoHoverId={photoHoverId}
+          onPhotoHover={onPhotoHover}
+        />
+
       </div>
       {/* Resize handle — right edge (desktop only) */}
       {!isMobile && (
@@ -437,6 +508,14 @@ function ActivityDetail({ walk, track, onBack, onElevHoverIdx, panelWidth, onWid
         </div>
       )}
     </div>
+    {showTaggingPrompt && (
+      <WalkTaggingPrompt
+        walkId={walkId}
+        {...(walk.plannedRouteId !== undefined ? { plannedRouteId: walk.plannedRouteId } : {})}
+        onDone={() => setTaggingDismissed(true)}
+      />
+    )}
+    </>
   );
 }
 
@@ -451,12 +530,40 @@ function StatCell({ label, value }: { label: string; value: string }) {
 
 // ── Main overlay ───────────────────────────────────────────────────────────────
 
-export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: ActivityOverlayProps) {
+export function ActivityOverlay({
+  onTrackChange,
+  onFitBounds,
+  onElevHoverIdx,
+  onPhotosChange,
+  photoHoverId,
+  onPhotoHover,
+}: ActivityOverlayProps) {
   const [selectedWalkId, setSelectedWalkId] = useState<Id<'walks'> | null>(null);
   const [hoveredWalkId, setHoveredWalkId] = useState<Id<'walks'> | null>(null);
   const [sidebarWidth, setSidebarWidth] = usePanelWidth();
 
   const walks = useQuery(api.walks.listForCurrentUser);
+  const walkIds = useMemo(() => (walks ?? []).map((w) => w._id), [walks]);
+  const cardEnrichmentRows = useQuery(
+    api.walks.getCardEnrichment,
+    walkIds.length > 0 ? { walkIds } : 'skip',
+  );
+  const cardEnrichment = useMemo(() => {
+    const map = new Map<Id<'walks'>, WalkCardEnrichment>();
+    for (const row of cardEnrichmentRows ?? []) {
+      map.set(row.walkId, {
+        totalPhotos: row.totalPhotos,
+        photos: row.photos,
+        routeCoordinates: row.routeCoordinates,
+      });
+    }
+    return map;
+  }, [cardEnrichmentRows]);
+  const removeWalk = useMutation(api.walks.remove);
+  const walkPhotos = useQuery(
+    api.walk_photos.listForWalk,
+    selectedWalkId ? { walkId: selectedWalkId } : 'skip',
+  );
 
   // Load GPS track for hover preview (skip when showing detail)
   const hoveredTrack = useQuery(
@@ -499,6 +606,16 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
     }
   }, [hoveredWalkId, selectedWalkId, onTrackChange]);
 
+  // Push walk photos to map markers when detail view is open
+  useEffect(() => {
+    if (!selectedWalkId) {
+      onPhotosChange([]);
+      onPhotoHover(null);
+      return;
+    }
+    onPhotosChange(walkPhotos ?? []);
+  }, [selectedWalkId, walkPhotos, onPhotosChange, onPhotoHover]);
+
   // When selectedTrack loads, push to map and fit
   const fittedIdRef = useRef<string | null>(null);
   useEffect(() => {
@@ -507,10 +624,14 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
     onTrackChange(pts);
     if (fittedIdRef.current !== selectedWalkId) {
       fittedIdRef.current = selectedWalkId;
-      const bounds = computeBounds(pts);
+      const photoPts = (walkPhotos ?? []).map((p: ActivityWalkPhoto) => ({
+        lat: p.latitude,
+        lng: p.longitude,
+      }));
+      const bounds = computeBounds([...pts, ...photoPts]);
       if (bounds) onFitBounds(bounds);
     }
-  }, [selectedTrack, selectedWalkId, onTrackChange, onFitBounds]);
+  }, [selectedTrack, selectedWalkId, walkPhotos, onTrackChange, onFitBounds]);
 
   // Clear fitted-id ref when selection changes
   useEffect(() => {
@@ -521,8 +642,10 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
     setSelectedWalkId(null);
     onElevHoverIdx(null);
     onTrackChange([]);
+    onPhotosChange([]);
+    onPhotoHover(null);
     prevBoundsRef.current = '';
-  }, [onElevHoverIdx, onTrackChange]);
+  }, [onElevHoverIdx, onTrackChange, onPhotosChange, onPhotoHover]);
 
   const handleWidthChange = setSidebarWidth;
 
@@ -557,15 +680,29 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
 
     function renderGroup(group: NonNullable<typeof walks>) {
       return group.map((walk) => (
-        <WalkRow
+        <WalkActivityCard
           key={walk._id}
           walk={walk}
+          enrichment={cardEnrichment.get(walk._id)}
           isHovered={hoveredWalkId === walk._id}
-          onMouseEnter={() => setHoveredWalkId(walk._id)}
-          onMouseLeave={() => setHoveredWalkId(null)}
-          onClick={() => {
+          onHover={(hovered) => setHoveredWalkId(hovered ? walk._id : null)}
+          onView={() => {
             setSelectedWalkId(walk._id);
             setHoveredWalkId(null);
+          }}
+          onRemove={() => {
+            void removeWalk({ walkId: walk._id }).then(() => {
+              if (selectedWalkId === walk._id) {
+                setSelectedWalkId(null);
+                onTrackChange([]);
+                onPhotosChange([]);
+                onPhotoHover(null);
+              }
+              if (hoveredWalkId === walk._id) {
+                setHoveredWalkId(null);
+                onTrackChange([]);
+              }
+            });
           }}
         />
       ));
@@ -578,7 +715,7 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
             <p className="text-[10px] font-semibold text-green-600 uppercase tracking-wider px-1 mb-1.5">
               In Progress
             </p>
-            <div className="space-y-1.5">{renderGroup(inProgress)}</div>
+            <div className="space-y-2">{renderGroup(inProgress)}</div>
           </div>
         )}
         {completed.length > 0 && (
@@ -588,12 +725,21 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
                 Completed
               </p>
             )}
-            <div className="space-y-1.5">{renderGroup(completed)}</div>
+            <div className="space-y-2">{renderGroup(completed)}</div>
           </div>
         )}
       </div>
     );
-  }, [walks, hoveredWalkId]);
+  }, [
+    walks,
+    hoveredWalkId,
+    selectedWalkId,
+    cardEnrichment,
+    removeWalk,
+    onTrackChange,
+    onPhotosChange,
+    onPhotoHover,
+  ]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -604,6 +750,9 @@ export function ActivityOverlay({ onTrackChange, onFitBounds, onElevHoverIdx }: 
         walkId={selectedWalkId}
         walk={selectedWalk}
         track={selectedTrack}
+        photos={walkPhotos}
+        photoHoverId={photoHoverId}
+        onPhotoHover={onPhotoHover}
         onBack={handleBack}
         onElevHoverIdx={onElevHoverIdx}
         panelWidth={sidebarWidth}

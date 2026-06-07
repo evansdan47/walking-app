@@ -5,7 +5,7 @@ import { useWalkSession, WalkSessionState } from '@/hooks/use-walk-session';
 export interface WalkSessionContextValue {
   state: WalkSessionState;
   pausedDurationMs: number;
-  start: (options?: { isLive?: boolean }) => Promise<void>;
+  start: (options?: { isLive?: boolean; plannedRouteId?: string }) => Promise<void>;
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   stop: (stepCount?: number) => Promise<void>;

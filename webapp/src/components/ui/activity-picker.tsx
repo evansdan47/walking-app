@@ -8,6 +8,10 @@ interface ActivityPickerProps {
   onChange: (type: ActivityType) => void;
   /** Additional class names for the trigger button wrapper. */
   className?: string;
+  /** Compact trigger for panel headers (no full-width button). */
+  compact?: boolean;
+  /** Which edge of the trigger the dropdown aligns to. */
+  menuAlign?: 'left' | 'right';
 }
 
 /**
@@ -15,7 +19,13 @@ interface ActivityPickerProps {
  * Each option shows an SVG icon alongside the activity label and description.
  * Dismisses on outside click or Escape.
  */
-export function ActivityPicker({ value, onChange, className = '' }: ActivityPickerProps) {
+export function ActivityPicker({
+  value,
+  onChange,
+  className = '',
+  compact = false,
+  menuAlign = 'left',
+}: ActivityPickerProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -44,16 +54,22 @@ export function ActivityPicker({ value, onChange, className = '' }: ActivityPick
       {/* Trigger */}
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex items-center gap-1.5 hover:bg-gray-100 rounded-lg px-1.5 py-1 transition-colors w-full"
+        className={`flex items-center hover:bg-gray-100 rounded-lg transition-colors ${
+          compact
+            ? 'gap-1 px-2 py-1 shrink-0'
+            : 'gap-1.5 px-1.5 py-1 w-full'
+        }`}
         aria-haspopup="listbox"
         aria-expanded={open}
         title={selected.description}
       >
-        <ActivityIcon type={value} size={18} />
-        <span className="text-sm font-bold text-slate leading-none">{selected.label}</span>
+        <ActivityIcon type={value} size={compact ? 16 : 18} />
+        <span className={`font-bold text-slate leading-none ${compact ? 'text-xs' : 'text-sm'}`}>
+          {selected.label}
+        </span>
         <svg
           viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
-          className="w-3 h-3 text-slate-light ml-auto shrink-0 transition-transform"
+          className={`w-3 h-3 text-slate-light shrink-0 transition-transform ${compact ? '' : 'ml-auto'}`}
           style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
         >
           <path d="M6 9l6 6 6-6" />
@@ -65,7 +81,9 @@ export function ActivityPicker({ value, onChange, className = '' }: ActivityPick
         <div
           role="listbox"
           aria-label="Select activity"
-          className="absolute left-0 top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-45"
+          className={`absolute top-full mt-1 z-50 bg-white border border-gray-200 rounded-xl shadow-lg py-1 min-w-45 ${
+            menuAlign === 'right' ? 'right-0' : 'left-0'
+          }`}
         >
           {(Object.keys(ACTIVITY_PROFILES) as ActivityType[]).map(type => {
             const profile = ACTIVITY_PROFILES[type];

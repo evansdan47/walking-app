@@ -39,6 +39,8 @@ export interface Walk {
   displayPolylineJson: string | null;
   /** Version of the algorithm used to produce displayPolylineJson. */
   displayPolylineVersion: number | null;
+  /** Convex planned route id when walk followed a saved route. */
+  plannedRouteId: string | null;
 }
 
 type WalkRow = {
@@ -54,6 +56,7 @@ type WalkRow = {
   is_live: number;
   display_polyline_json: string | null;
   display_polyline_version: number | null;
+  planned_route_id: string | null;
 };
 
 function rowToWalk(row: WalkRow): Walk {
@@ -70,6 +73,7 @@ function rowToWalk(row: WalkRow): Walk {
     isLive: row.is_live === 1,
     displayPolylineJson: row.display_polyline_json ?? null,
     displayPolylineVersion: row.display_polyline_version ?? null,
+    plannedRouteId: row.planned_route_id ?? null,
   };
 }
 
@@ -79,16 +83,22 @@ export function createWalk(walk: {
   deviceId: string;
   startedAt: number;
   isLive?: boolean;
+  plannedRouteId?: string;
 }): void {
   db.runSync(
-    `INSERT INTO walks (id, title, status, started_at, device_id, is_live, created_at) VALUES (?, ?, 'recording', ?, ?, ?, ?)`,
+    `INSERT INTO walks (id, title, status, started_at, device_id, is_live, planned_route_id, created_at) VALUES (?, ?, 'recording', ?, ?, ?, ?, ?)`,
     walk.id,
     walk.title ?? null,
     walk.startedAt,
     walk.deviceId,
     walk.isLive ? 1 : 0,
+    walk.plannedRouteId ?? null,
     Date.now(),
   );
+}
+
+export function updateWalkPlannedRouteId(id: string, plannedRouteId: string | null): void {
+  db.runSync(`UPDATE walks SET planned_route_id = ? WHERE id = ?`, plannedRouteId, id);
 }
 
 /**

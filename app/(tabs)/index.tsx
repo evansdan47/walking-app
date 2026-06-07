@@ -3032,7 +3032,7 @@ export default function MapScreen() {
               setActiveSheet(null);
             }}
             onStartWalk={(route) => {
-              void start();
+              void start({ plannedRouteId: route._id });
               setFollowingRoute(route);
               ignoreNextCloseRef.current = true;
               sheetRef.current?.close();
@@ -3087,7 +3087,7 @@ export default function MapScreen() {
             }}
             onClearRoute={() => setExploreDetailRoute(null)}
             onStartWalk={(route) => {
-              void start();
+              void start({ plannedRouteId: route._id });
               setFollowingRoute(route);
               ignoreNextCloseRef.current = true;
               sheetRef.current?.close();

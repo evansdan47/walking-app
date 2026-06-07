@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import MapboxGL from '@rnmapbox/maps';
 
 import { PhotoViewerCarousel } from '@/components/review/photo-viewer-carousel';
+import { WalkTaggingSheet } from '@/components/tags/walk-tagging-sheet';
 import { ReviewActionBar } from '@/components/review/review-action-bar';
 import { ReviewRouteLayer } from '@/components/review/review-route-layer';
 import { ReviewTabBar, type TabDef } from '@/components/review/review-tab-bar';
@@ -20,6 +21,7 @@ import { TabWalkStats } from '@/components/review/tab-walk-stats';
 import { AppHeader } from '@/components/shared/app-header';
 import { Colors, Spacing, Typography } from '@/constants/theme';
 import { useReviewRoute } from '@/contexts/review-route-context';
+import { useWalkTaggingExperiment } from '@/hooks/use-experiment';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useRouteColours } from '@/hooks/use-route-colours';
 import { useUserPreferences } from '@/hooks/use-user-preferences';
@@ -66,6 +68,8 @@ export default function WalkSummaryScreen() {
   const [activeTab, setActiveTab] = useState<string>('walk');
   const [sheetOpen, setSheetOpen] = useState(true);
   const [focusPhotoCoordinate, setFocusPhotoCoordinate] = useState<[number, number] | null>(null);
+  const [taggingVisible, setTaggingVisible] = useState(false);
+  const experiment = useWalkTaggingExperiment();
 
   // ── Shared map integration ─────────────────────────────────────────────
   // Signal to index.tsx that review is active (so it restores the correct
@@ -86,6 +90,12 @@ export default function WalkSummaryScreen() {
     return () => { clearReviewData(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route, photos, onPhotoTap]);
+
+  useEffect(() => {
+    if (walk?.status === 'completed' && experiment.enabled && !experiment.isLoading) {
+      setTaggingVisible(true);
+    }
+  }, [walk?.status, experiment.enabled, experiment.isLoading]);
 
   // Camera padding for the local ReviewRouteLayer — above sheet when open, minimal when closed.
   const cameraPaddingBottom = sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60;
@@ -406,6 +416,13 @@ export default function WalkSummaryScreen() {
         onDelete={handleDelete}
         onClose={() => router.back()}
         showSaveRoute={showSaveRoute}
+      />
+
+      <WalkTaggingSheet
+        localWalkId={walk.id}
+        plannedRouteId={walk.plannedRouteId}
+        visible={taggingVisible}
+        onClose={() => setTaggingVisible(false)}
       />
     </View>
   );

@@ -84,6 +84,18 @@ export function getPendingJobs(): SyncJob[] {
   return rows.map(rowToJob);
 }
 
+export function getPendingJobForWalk(walkId: string): SyncJob | null {
+  const row = db.getFirstSync<SyncJobRow>(
+    `SELECT * FROM sync_jobs
+     WHERE walk_id = ?
+       AND status IN ('pending', 'failed', 'in_progress')
+     ORDER BY rowid DESC
+     LIMIT 1`,
+    walkId,
+  );
+  return row ? rowToJob(row) : null;
+}
+
 export function updateJobStatus(
   id: string,
   status: SyncJob['status'],

@@ -111,6 +111,9 @@ try { db.execSync(`ALTER TABLE walks ADD COLUMN stats_version INTEGER`); } catch
 try { db.execSync(`ALTER TABLE walks ADD COLUMN display_polyline_json TEXT`); } catch {}
 try { db.execSync(`ALTER TABLE walks ADD COLUMN display_polyline_version INTEGER`); } catch {}
 
+// Planned route followed during recording (Explore → Start Walk).
+try { db.execSync(`ALTER TABLE walks ADD COLUMN planned_route_id TEXT`); } catch {}
+
 // walk_photos: OS asset URI (replaces local_uri), explicit upload status, and
 // pre-computed nearest track point for fast review timeline positioning.
 try { db.execSync(`ALTER TABLE walk_photos ADD COLUMN local_asset_uri TEXT`); } catch {}

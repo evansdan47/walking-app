@@ -1,5 +1,6 @@
 'use client';
 
+import { PanelPacePicker } from '@/components/panel-pace-picker';
 import { CollapsibleSidePanel } from '@/components/ui/collapsible-side-panel';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { usePace } from '@/components/pace-context';
@@ -8,6 +9,8 @@ import { api } from '@convex/_generated/api';
 import { useMutation, useQuery } from 'convex/react';
 import type { Id } from '@convex/_generated/dataModel';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { TagCategoryBrowser } from '@/components/tags/tag-category-browser';
+import { suggestTagsForRoute, type PoiType } from '@/lib/tag-auto-detect';
 import { AddPoiForm, PLACE_TYPE_META, type PendingPoi, type PlaceType } from './poi-add-form';
 import { usePanelWidth, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
 
@@ -1351,6 +1354,7 @@ function PlannerSidebar({
     <>
       <CollapsibleSidePanel
         title="Custom route"
+        headerActions={<PanelPacePicker />}
         titleContent={
           isEditingName ? (
             <input
@@ -1996,27 +2000,98 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
 }) {
   const saveRoute = useMutation(api.planned_routes.save);
   const updateRoute = useMutation(api.planned_routes.update);
+  const submitCreatorTags = useMutation(api.tags.submitCreatorTags);
   const createPlace = useMutation(api.places.createPlace);
   const linkToPlannedRoute = useMutation(api.places.linkToPlannedRoute);
+  const allTags = useQuery(api.tags.listActiveTags, open ? {} : 'skip');
+  const bootstrapTags = useMutation(api.tags.bootstrapTagDefinitionsIfEmpty);
+  const existingTagSummary = useQuery(
+    api.tags.getRouteTagSummary,
+    open && editingRouteId ? { plannedRouteId: editingRouteId } : 'skip',
+  );
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<Id<'tagDefinitions'>>>(new Set());
+  const [tagsSectionOpen, setTagsSectionOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const titleRef = useRef<HTMLInputElement>(null);
+  const tagsInitRef = useRef(false);
+  const tagsBootstrapRef = useRef(false);
+  const prevTagCountRef = useRef(0);
+
+  const suggestedSlugs = useMemo(() => {
+    if (!open) return new Set<string>();
+    const poiTypes = pendingPois.map((poi) => poi.type as PoiType);
+    return new Set(
+      suggestTagsForRoute({
+        legs: legs.map((leg) => ({ points: leg.points })),
+        stats: {
+          distanceKm: totalDistKm,
+          elevationGainM: elevGainM,
+        },
+        poiTypes,
+      }).map((s) => s.slug),
+    );
+  }, [open, legs, totalDistKm, elevGainM, pendingPois]);
 
   useEffect(() => {
-    if (open) {
-      setTitle(initialTitle?.trim() ?? '');
-      setDescription(initialDescription?.trim() ?? '');
-      setError('');
-      setTimeout(() => {
-        const el = titleRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(el.value.length, el.value.length);
-      }, 50);
+    if (!open) {
+      tagsInitRef.current = false;
+      tagsBootstrapRef.current = false;
+      return;
     }
-  }, [open]);
+    setTitle(initialTitle?.trim() ?? '');
+    setDescription(initialDescription?.trim() ?? '');
+    setError('');
+    setTimeout(() => {
+      const el = titleRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }, 50);
+  }, [open, initialTitle, initialDescription]);
+
+  useEffect(() => {
+    if (!open || allTags === undefined || tagsBootstrapRef.current) return;
+    if (allTags.length > 0) return;
+    tagsBootstrapRef.current = true;
+    void bootstrapTags({}).catch(() => {
+      tagsBootstrapRef.current = false;
+    });
+  }, [open, allTags, bootstrapTags]);
+
+  // Re-run tag selection when vocabulary loads after an initial empty response.
+  useEffect(() => {
+    const count = allTags?.length ?? 0;
+    if (count > 0 && prevTagCountRef.current === 0) {
+      tagsInitRef.current = false;
+    }
+    prevTagCountRef.current = count;
+  }, [allTags]);
+
+  useEffect(() => {
+    if (!open || allTags === undefined || tagsInitRef.current) return;
+    if (editingRouteId && existingTagSummary === undefined) return;
+
+    let initialIds: Id<'tagDefinitions'>[];
+    if (editingRouteId && existingTagSummary) {
+      initialIds = existingTagSummary.creatorTagIds;
+      if (initialIds.length === 0 && suggestedSlugs.size > 0) {
+        initialIds = allTags
+          .filter((tag) => suggestedSlugs.has(tag.slug))
+          .map((tag) => tag._id);
+      }
+    } else {
+      initialIds = allTags
+        .filter((tag) => suggestedSlugs.has(tag.slug))
+        .map((tag) => tag._id);
+    }
+
+    setSelectedTagIds(new Set(initialIds));
+    setTagsSectionOpen(initialIds.length > 0 || suggestedSlugs.size > 0);
+    tagsInitRef.current = true;
+  }, [open, allTags, existingTagSummary, editingRouteId, suggestedSlugs]);
 
   useEffect(() => {
     if (!open) return;
@@ -2079,6 +2154,11 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
         });
       }
 
+      await submitCreatorTags({
+        plannedRouteId: id,
+        tagIds: [...selectedTagIds],
+      });
+
       onSaved(id);
       onClose();
     } catch (e) {
@@ -2102,9 +2182,9 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
       aria-labelledby="save-route-title"
     >
       <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
-      <div className="relative z-10 w-full max-w-sm mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden">
-        <div className="h-1 w-full bg-brand" />
-        <div className="px-5 pt-5 pb-5">
+      <div className="relative z-10 w-full max-w-lg mx-4 bg-white rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[min(90vh,720px)]">
+        <div className="h-1 w-full bg-brand shrink-0" />
+        <div className="px-5 pt-5 pb-5 overflow-y-auto min-h-0">
           <h2 id="save-route-title" className="text-base font-bold text-slate mb-0.5">{editingRouteId ? 'Update route' : 'Save route'}</h2>
           <p className="text-[11px] text-slate-light mb-4">
             {distLabel}{elevGainM > 0 ? ` · +${Math.round(elevGainM)} m elevation` : ''}
@@ -2137,11 +2217,56 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
             </div>
           </div>
 
+          <div className="mb-4 border border-gray-200 rounded-xl overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setTagsSectionOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-3 py-2.5 bg-gray-50 hover:bg-gray-100 transition-colors text-left"
+            >
+              <div>
+                <p className="text-xs font-semibold text-slate">Route characteristics</p>
+                <p className="text-[10px] text-slate-light mt-0.5">
+                  {selectedTagIds.size > 0
+                    ? `${selectedTagIds.size} tag${selectedTagIds.size !== 1 ? 's' : ''} selected`
+                    : suggestedSlugs.size > 0
+                      ? `${suggestedSlugs.size} suggested from your route`
+                      : 'Optional — helps walkers find your route'}
+                </p>
+              </div>
+              <svg
+                viewBox="0 0 24 24"
+                className={`w-4 h-4 text-slate-light shrink-0 transition-transform ${tagsSectionOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+              >
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            {tagsSectionOpen && (
+              <div className="px-3 py-3 border-t border-gray-200">
+                {suggestedSlugs.size > 0 && allTags && allTags.length > 0 && (
+                  <p className="text-[10px] text-slate-light mb-2">
+                    Suggested tags are highlighted — adjust or add more.
+                  </p>
+                )}
+                <TagCategoryBrowser
+                  tags={allTags ?? []}
+                  isLoading={allTags === undefined}
+                  selectedIds={selectedTagIds}
+                  onChange={setSelectedTagIds}
+                  suggestedSlugs={suggestedSlugs}
+                  maxHeightClass="max-h-48"
+                />
+              </div>
+            )}
+          </div>
+
           {error && (
             <p className="text-[11px] text-red-500 mb-3">{error}</p>
           )}
 
-          <div className="flex gap-2 justify-end">
+          <div className="flex gap-2 justify-end shrink-0">
             <button
               onClick={onClose}
               className="px-4 py-1.5 text-sm font-medium text-slate hover:bg-gray-100 rounded-lg transition-colors"

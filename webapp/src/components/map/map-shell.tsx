@@ -7,7 +7,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Map, { Layer, Marker, Popup, Source, type LayerProps, type MapMouseEvent, type MapRef } from 'react-map-gl/mapbox';
 import { ExploreMapLayers, ExploreOverlay, type EnrichedRoute } from './explore-overlay';
-import { ActivityOverlay } from './activity-overlay';
+import { ActivityOverlay, type ActivityWalkPhoto } from './activity-overlay';
 import { PlannerOverlay, SEGMENT_COLOURS, bearingDeg, densifyPoints, haversineKm, toGeoJSON, toMultiGeoJSON, type ChartRange, type Leg, type Point } from './planner-overlay';
 import { PLACE_TYPE_META } from './poi-add-form';
 import type { Id } from '@convex/_generated/dataModel';
@@ -183,6 +183,8 @@ export function MapShell() {
   /** Points of the currently previewed / selected GPS track (from trackPoints). */
   const [activityTrack, setActivityTrack] = useState<Point[]>([]);
   const [activityElevHoverIdx, setActivityElevHoverIdx] = useState<number | null>(null);
+  const [activityPhotos, setActivityPhotos] = useState<ActivityWalkPhoto[]>([]);
+  const [activityPhotoHoverId, setActivityPhotoHoverId] = useState<Id<'walkPhotos'> | null>(null);
   const [turnaroundIdx, setTurnaroundIdx] = useState<number | null>(null);
   const [isPending, setIsPending] = useState(false);
 
@@ -1715,6 +1717,27 @@ export function MapShell() {
             <WalkerMarker />
           </Marker>
         )}
+        {/* Activity mode: walk photo markers */}
+        {mode === 'activity' && activityPhotos.map((photo) => (
+          <Marker
+            key={photo._id}
+            longitude={photo.longitude}
+            latitude={photo.latitude}
+            anchor="center"
+          >
+            <button
+              type="button"
+              className="pointer-events-auto"
+              aria-label="Walk photo"
+              onMouseEnter={() => setActivityPhotoHoverId(photo._id)}
+              onMouseLeave={() => setActivityPhotoHoverId(null)}
+              onFocus={() => setActivityPhotoHoverId(photo._id)}
+              onBlur={() => setActivityPhotoHoverId(null)}
+            >
+              <PhotoMapPin active={activityPhotoHoverId === photo._id} />
+            </button>
+          </Marker>
+        ))}
       </Map>
 
       {/* ── Mode overlays (UI panels on top of map) ── */}
@@ -1737,6 +1760,9 @@ export function MapShell() {
             onTrackChange={setActivityTrack}
             onFitBounds={handleFitBounds}
             onElevHoverIdx={setActivityElevHoverIdx}
+            onPhotosChange={setActivityPhotos}
+            photoHoverId={activityPhotoHoverId}
+            onPhotoHover={setActivityPhotoHoverId}
           />
         )}
         {mode === 'planner' && !isFlyby && !isWalkPreview && (
@@ -1944,6 +1970,27 @@ function TurnaroundMarker() {
 
 /** Walker marker: shown on the map at the elevation chart hover position.
  *  Three sonar rings radiate outward from the marker while fading. */
+/** Camera pin for walk photos on the activity map. */
+function PhotoMapPin({ active }: { active: boolean }) {
+  return (
+    <div
+      className={`flex items-center justify-center rounded-full border-2 border-white shadow-md transition-transform ${
+        active ? 'scale-125 ring-2 ring-brand' : ''
+      }`}
+      style={{
+        width: 28,
+        height: 28,
+        backgroundColor: active ? '#E65100' : '#1976d2',
+      }}
+    >
+      <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" strokeWidth="2">
+        <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a41.09 41.09 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
+      </svg>
+    </div>
+  );
+}
+
 function WalkerMarker() {
   return (
     <>

@@ -1,5 +1,13 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { experimentAssignmentMethodValidator } from "./experimentValidators";
+import {
+  tagCategoryValidator,
+  tagContributionSourceValidator,
+  tagEntityTypeValidator,
+  tagKindValidator,
+  taggingExperimentVariantValidator,
+} from "./tagValidators";
 
 export default defineSchema({
   /**
@@ -18,6 +26,9 @@ export default defineSchema({
     mapCompass: v.optional(v.boolean()),
     /** Floating location info panel (lat/lng, OS grid ref, postcode). */
     mapLocationInfo: v.optional(v.boolean()),
+    /** Sticky A/B/C assignment for walk tagging UI experiments. */
+    taggingExperimentVariant: v.optional(taggingExperimentVariantValidator),
+    taggingExperimentAssignedAt: v.optional(v.number()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   /**
@@ -62,10 +73,17 @@ export default defineSchema({
         pointCount: v.number(), // count of accepted (clean) track points
       }),
     ),
+    /** Planned route this walk relates to (for tag aggregation). */
+    plannedRouteId: v.optional(v.id("plannedRoutes")),
+    /** Set when the user completes the post-walk tagging flow. */
+    taggingCompletedAt: v.optional(v.number()),
+    /** User dismissed tagging — optional re-prompt later. */
+    taggingSkipped: v.optional(v.boolean()),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_status", ["userId", "status"])
-    .index("by_deviceId", ["deviceId"]),
+    .index("by_deviceId", ["deviceId"])
+    .index("by_plannedRouteId", ["plannedRouteId"]),
 
   /**
    * Individual GPS fixes captured during recording.
@@ -159,10 +177,15 @@ export default defineSchema({
     endedAt: v.optional(v.number()), // Unix ms
     finalDistanceCoveredMetres: v.optional(v.number()),
     finalProgressPercent: v.optional(v.number()), // 0-100, % of route completed
+    /** Planned route being followed (when source is a planned route). */
+    plannedRouteId: v.optional(v.id("plannedRoutes")),
+    taggingCompletedAt: v.optional(v.number()),
+    taggingSkipped: v.optional(v.boolean()),
   })
     .index("by_userId", ["userId"])
     .index("by_walkId", ["walkId"])
-    .index("by_userId_and_status", ["userId", "status"]),
+    .index("by_userId_and_status", ["userId", "status"])
+    .index("by_plannedRouteId", ["plannedRouteId"]),
 
   /**
    * Individual off-route deviation events detected during a follow session.
@@ -231,6 +254,10 @@ export default defineSchema({
         elevationGainM: v.number(),
       }),
     ),
+    /** Creator-selected tags at save time (controlled vocabulary ids). */
+    creatorTagIds: v.optional(v.array(v.id("tagDefinitions"))),
+    /** Denormalised count of completed walks linked to this route. */
+    linkedWalkCount: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_createdAt", ["userId", "createdAt"])
@@ -478,4 +505,124 @@ export default defineSchema({
   })
     .index("by_email", ["email"])
     .index("by_submittedAt", ["submittedAt"]),
+
+  // ------------------------------------------------------------------
+  // Walk tagging — controlled vocabulary & contributions
+  // @see docs/taggingsystem.md, docs/TaggingSystemRoadmap.md
+  // ------------------------------------------------------------------
+
+  /**
+   * Canonical tag taxonomy. Users select from these slugs only.
+   */
+  tagDefinitions: defineTable({
+    slug: v.string(),
+    category: tagCategoryValidator,
+    kind: tagKindValidator,
+    label: v.string(),
+    description: v.optional(v.string()),
+    sortOrder: v.number(),
+    isActive: v.boolean(),
+    seasonalMonths: v.optional(v.array(v.number())),
+    autoDetectRule: v.optional(v.string()),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_category_and_sortOrder", ["category", "sortOrder"])
+    .index("by_isActive", ["isActive"]),
+
+  /**
+   * One row per user assertion (creator, walker, or auto-detect confirm).
+   * Walk tags feed routeTagSummaries — they do not patch plannedRoutes directly.
+   */
+  tagContributions: defineTable({
+    tagId: v.id("tagDefinitions"),
+    userId: v.id("users"),
+    entityType: tagEntityTypeValidator,
+    entityId: v.string(),
+    plannedRouteId: v.optional(v.id("plannedRoutes")),
+    source: tagContributionSourceValidator,
+    reportedAt: v.number(),
+    experimentVariant: v.optional(taggingExperimentVariantValidator),
+    questionnaireAnswers: v.optional(v.any()),
+  })
+    .index("by_entityType_and_entityId", ["entityType", "entityId"])
+    .index("by_plannedRouteId", ["plannedRouteId"])
+    .index("by_plannedRouteId_and_tagId", ["plannedRouteId", "tagId"])
+    .index("by_userId_and_entityType_and_entityId_and_tagId", [
+      "userId",
+      "entityType",
+      "entityId",
+      "tagId",
+    ]),
+
+  /**
+   * Denormalised rollups for planned route discovery and detail views.
+   */
+  routeTagSummaries: defineTable({
+    plannedRouteId: v.id("plannedRoutes"),
+    tagId: v.id("tagDefinitions"),
+    confirmationCount: v.number(),
+    creatorConfirmed: v.boolean(),
+    autoSuggested: v.boolean(),
+    lastReportedAt: v.number(),
+    confidenceScore: v.number(),
+  })
+    .index("by_plannedRouteId", ["plannedRouteId"])
+    .index("by_plannedRouteId_and_tagId", ["plannedRouteId", "tagId"]),
+
+  // ------------------------------------------------------------------
+  // Feature experiments — reusable A/B/C (or arbitrary variant) framework
+  // @see docs/experiments.md
+  // ------------------------------------------------------------------
+
+  /**
+   * Per-experiment runtime config: enable flag, variant weights, UI config blob.
+   */
+  experimentConfigs: defineTable({
+    key: v.string(),
+    label: v.string(),
+    description: v.optional(v.string()),
+    enabled: v.boolean(),
+    variants: v.array(
+      v.object({
+        id: v.string(),
+        weight: v.number(),
+      }),
+    ),
+    config: v.optional(v.any()),
+    /** When set to "false", disables this experiment regardless of `enabled`. */
+    envKillSwitch: v.optional(v.string()),
+    updatedAt: v.number(),
+    updatedByUserId: v.optional(v.id("users")),
+  }).index("by_key", ["key"]),
+
+  /**
+   * Sticky per-user variant assignment. Source of truth for experiment arms.
+   */
+  experimentAssignments: defineTable({
+    userId: v.id("users"),
+    experimentKey: v.string(),
+    variant: v.string(),
+    assignedAt: v.number(),
+    method: experimentAssignmentMethodValidator,
+    assignedByUserId: v.optional(v.id("users")),
+  })
+    .index("by_userId_and_experimentKey", ["userId", "experimentKey"])
+    .index("by_experimentKey", ["experimentKey"]),
+
+  /**
+   * Funnel / interaction events for experiment analysis.
+   */
+  experimentEvents: defineTable({
+    userId: v.id("users"),
+    experimentKey: v.string(),
+    eventType: v.string(),
+    variant: v.optional(v.string()),
+    entityType: v.optional(v.string()),
+    entityId: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+    recordedAt: v.number(),
+  })
+    .index("by_experimentKey_and_recordedAt", ["experimentKey", "recordedAt"])
+    .index("by_userId_and_experimentKey", ["userId", "experimentKey"])
+    .index("by_experimentKey_and_eventType", ["experimentKey", "eventType"]),
 });

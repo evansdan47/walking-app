@@ -30,6 +30,8 @@ interface CollapsibleSidePanelProps {
   footer?: React.ReactNode;
   /** Optional extra content rendered inside the header, below the title row. */
   headerExtra?: React.ReactNode;
+  /** Right-aligned actions in the title row (e.g. pace picker). */
+  headerActions?: React.ReactNode;
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -47,6 +49,7 @@ export function CollapsibleSidePanel({
   collapsibleContent,
   footer,
   headerExtra,
+  headerActions,
 }: CollapsibleSidePanelProps) {
   // ── Mobile detection ────────────────────────────────────────────────────
   const [isMobile, setIsMobile] = useState(
@@ -149,6 +152,7 @@ export function CollapsibleSidePanel({
           </button>
         )}
         <h2 className="flex-1 min-w-0 text-base font-bold text-slate">{titleContent ?? title}</h2>
+        {headerActions}
       </div>
       {headerExtra && <div className="mt-2">{headerExtra}</div>}
     </div>

@@ -92,7 +92,7 @@ export function useWalkSession() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const start = useCallback(async (options?: { isLive?: boolean }) => {
+  const start = useCallback(async (options?: { isLive?: boolean; plannedRouteId?: string }) => {
     const walkId = randomUUID();
     const deviceId = `${Platform.OS}-${Platform.Version}`;
     const startedAt = Date.now();
@@ -100,7 +100,13 @@ export function useWalkSession() {
     pausedDurationMsRef.current = 0;
     pausedAtRef.current = null;
 
-    createWalk({ id: walkId, deviceId, startedAt, isLive });
+    createWalk({
+      id: walkId,
+      deviceId,
+      startedAt,
+      isLive,
+      ...(options?.plannedRouteId ? { plannedRouteId: options.plannedRouteId } : {}),
+    });
     setActiveWalkId(walkId);
     try {
       await startTracking();

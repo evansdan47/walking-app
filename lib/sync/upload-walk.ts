@@ -83,6 +83,7 @@ export async function uploadWalk(
       walkId: walk.convexId as any,
       endedAt: walk.endedAt ?? Date.now(),
       ...(walk.stats !== null ? { stats: toConvexStats(walk.stats) } : {}),
+      ...(walk.plannedRouteId ? { plannedRouteId: walk.plannedRouteId as any } : {}),
     });
   } else {
     // Normal (non-live) walk — create from scratch.
@@ -93,6 +94,7 @@ export async function uploadWalk(
       ...(walk.title ? { title: walk.title } : {}),
       ...(walk.endedAt !== null ? { endedAt: walk.endedAt } : {}),
       ...(walk.stats !== null ? { stats: toConvexStats(walk.stats) } : {}),
+      ...(walk.plannedRouteId ? { plannedRouteId: walk.plannedRouteId as any } : {}),
     });
     updateWalkConvexId(walkId, convexWalkId);
   }
