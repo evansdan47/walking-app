@@ -1,5 +1,6 @@
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
+import { DEFAULT_PREFERENCES, DEFAULT_SUBSCRIPTION } from './userAccountCore';
 
 type AuthCtx = QueryCtx | MutationCtx;
 
@@ -21,10 +22,15 @@ async function ensureUserFromIdentity(ctx: MutationCtx): Promise<Doc<'users'>> {
   const existing = await findUserByIdentity(ctx, identity.tokenIdentifier);
   if (existing) return existing;
 
+  const now = Date.now();
   const userId = await ctx.db.insert('users', {
     tokenIdentifier: identity.tokenIdentifier,
     ...(identity.name !== undefined ? { name: identity.name } : {}),
     ...(identity.email !== undefined ? { email: identity.email } : {}),
+    subscription: DEFAULT_SUBSCRIPTION,
+    preferences: DEFAULT_PREFERENCES,
+    createdAt: now,
+    updatedAt: now,
   });
   const created = await ctx.db.get(userId);
   if (!created) throw new Error('User not found');

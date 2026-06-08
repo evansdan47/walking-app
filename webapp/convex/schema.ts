@@ -8,6 +8,18 @@ import {
   tagKindValidator,
   taggingExperimentVariantValidator,
 } from "./tagValidators";
+import {
+  badgeCategoryValidator,
+  badgeCriteriaTypeValidator,
+  goalCategoryValidator,
+  goalPeriodValidator,
+  userGoalStatusValidator,
+  userGoalTypeValidator,
+  userGoalUnitValidator,
+  userPreferencesValidator,
+  userStatsCacheValidator,
+  userSubscriptionValidator,
+} from "./userValidators";
 
 export default defineSchema({
   /**
@@ -17,7 +29,16 @@ export default defineSchema({
     tokenIdentifier: v.string(), // from ctx.auth.getUserIdentity().tokenIdentifier
     name: v.optional(v.string()),
     email: v.optional(v.string()),
+    /** @deprecated Prefer `preferences.profile.weightKg`. Kept for migration reads. */
     weightKg: v.optional(v.number()),
+    /** Account hub: units, weight, display, privacy. */
+    preferences: v.optional(userPreferencesValidator),
+    /** Subscription plan display (billing integration later). */
+    subscription: v.optional(userSubscriptionValidator),
+    /** Denormalised lifetime stats for account overview (optional cache). */
+    statsCache: v.optional(userStatsCacheValidator),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
     /** Set via the Convex dashboard to grant admin privileges. */
     isAdmin: v.optional(v.boolean()),
     /** 3D map view — 45° isometric pitch. */
@@ -41,6 +62,68 @@ export default defineSchema({
     /** Web app version string from the most recent web session sync. */
     lastWebAppVersion: v.optional(v.string()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
+
+  // ------------------------------------------------------------------
+  // Account hub — goals & badges (@see docs/UserMenuRoadmap.md)
+  // ------------------------------------------------------------------
+
+  /** User-created walking goals with time windows and progress. */
+  userGoals: defineTable({
+    userId: v.id("users"),
+    goalType: userGoalTypeValidator,
+    /** Data-driven category (@see convex/goalCatalog.ts). */
+    category: goalCategoryValidator,
+    metric: v.string(),
+    period: goalPeriodValidator,
+    title: v.string(),
+    status: userGoalStatusValidator,
+    /** Target amount in `unit` (e.g. 100 km, 3 walks, 18000 seconds). */
+    targetValue: v.number(),
+    unit: userGoalUnitValidator,
+    /** Optional label for virtual journeys / famous climbs. */
+    challengeLabel: v.optional(v.string()),
+    /** Stable id from goal catalog challenge preset, if any. */
+    challengeId: v.optional(v.string()),
+    windowStart: v.number(),
+    windowEnd: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    /** Cached progress for list views; recomputed from walks/routes. */
+    progressValue: v.optional(v.number()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_status", ["userId", "status"])
+    .index("by_userId_and_windowEnd", ["userId", "windowEnd"]),
+
+  /** Data-driven badge catalogue (seeded from badgeDefinitionsSeed.ts). */
+  badgeDefinitions: defineTable({
+    slug: v.string(),
+    category: badgeCategoryValidator,
+    label: v.string(),
+    description: v.string(),
+    sortOrder: v.number(),
+    /** UI icon key (web/mobile map to assets). */
+    iconKey: v.optional(v.string()),
+    criteriaType: badgeCriteriaTypeValidator,
+    criteriaThreshold: v.optional(v.number()),
+    isActive: v.boolean(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_category_and_sortOrder", ["category", "sortOrder"])
+    .index("by_isActive", ["isActive"]),
+
+  /** Badges unlocked by a user. */
+  userBadges: defineTable({
+    userId: v.id("users"),
+    badgeId: v.id("badgeDefinitions"),
+    unlockedAt: v.number(),
+    metadata: v.optional(v.any()),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_userId_and_badgeId", ["userId", "badgeId"])
+    .index("by_userId_and_unlockedAt", ["userId", "unlockedAt"])
+    .index("by_badgeId", ["badgeId"]),
 
   /**
    * A single walk session — covers recording, review and replay source.

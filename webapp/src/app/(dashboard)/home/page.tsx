@@ -52,6 +52,30 @@ const BADGE: Record<BadgeVariant, string> = {
 
 const UPDATES: { date: string; badge: BadgeVariant; title: string; body: string }[] = [
   {
+    date:  '8 June 2026',
+    badge: 'new',
+    title: 'Walking goals in your account menu',
+    body:  'Open your avatar on the map and choose Goals to set up to three active targets\u2014distance, walk count, duration, elevation, streaks, route planning, virtual journeys (like Lands End to John O\u2019Groats), and famous climb challenges. Progress counts from when you create each goal, and open-ended challenges show how many days you\u2019ve been on them (Day 1 is the day you started).',
+  },
+  {
+    date:  '8 June 2026',
+    badge: 'new',
+    title: 'Account menu: your walking dashboard',
+    body:  'The header avatar now opens a Rambleio account panel without leaving the map. Browse Overview, Profile, Preferences, Goals, Subscription, and more from a sidebar inside the dropdown. Your lifetime stats (walks, distance, ascent, and moving time) live on Overview and update from synced completed walks.',
+  },
+  {
+    date:  '8 June 2026',
+    badge: 'new',
+    title: 'Profile, preferences & subscription',
+    body:  'Set your display name and avatar (including Rambleio presets), choose distance, elevation, and weight units, and manage body weight for calorie estimates. The Subscription section shows your Beta plan and will be ready for paid tiers later\u2014no billing during beta.',
+  },
+  {
+    date:  '8 June 2026',
+    badge: 'improvement',
+    title: 'Elevation in metres or feet',
+    body:  'Elevation is now independent of distance units. In Preferences, pick Metres or Feet and see ascent, climb challenges, and elevation profiles in your chosen unit across Activity, Explore, and the Planner.',
+  },
+  {
     date:  '3 June 2026',
     badge: 'new',
     title: 'Immersive photo viewer',

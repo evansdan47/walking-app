@@ -15,6 +15,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExploreElevationProfile } from './explore-overlay';
 import type { Point } from './planner-overlay';
 import { usePanelWidth, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH, usePanelHeight, PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import { formatDistanceMetres, formatElevation, formatPace as formatPaceUnit } from '@/lib/format-units';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -52,11 +54,6 @@ function formatDate(ts: number) {
   });
 }
 
-function formatDistance(metres: number) {
-  const km = metres / 1000;
-  return km >= 1 ? `${km.toFixed(2)} km` : `${Math.round(metres)} m`;
-}
-
 function formatDuration(totalSeconds: number) {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -64,12 +61,6 @@ function formatDuration(totalSeconds: number) {
   if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m`;
   if (m > 0) return `${m}m ${String(s).padStart(2, '0')}s`;
   return `${s}s`;
-}
-
-function formatPace(secsPerKm: number) {
-  const m = Math.floor(secsPerKm / 60);
-  const s = Math.round(secsPerKm % 60);
-  return `${m}:${String(s).padStart(2, '0')} /km`;
 }
 
 function formatPhotoClockTime(ts: number) {
@@ -265,6 +256,7 @@ function ActivityDetail({
   panelWidth,
   onWidthChange,
 }: ActivityDetailProps) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const stats = walk.stats;
   const [taggingDismissed, setTaggingDismissed] = useState(false);
   const showTaggingPrompt =
@@ -424,11 +416,11 @@ function ActivityDetail({
         {/* Primary stats grid */}
         {stats && (
           <div className="grid grid-cols-3 gap-3">
-            <StatCell label="Distance" value={formatDistance(stats.distanceMetres)} />
+            <StatCell label="Distance" value={formatDistanceMetres(stats.distanceMetres, distanceUnit)} />
             <StatCell label="Duration" value={formatDuration(stats.durationSeconds)} />
             <StatCell
               label="Avg pace"
-              value={stats.avgPaceSecsPerKm != null ? formatPace(stats.avgPaceSecsPerKm) : '—'}
+              value={stats.avgPaceSecsPerKm != null ? formatPaceUnit(stats.avgPaceSecsPerKm, distanceUnit) : '—'}
             />
           </div>
         )}
@@ -458,7 +450,7 @@ function ActivityDetail({
           <div className="grid grid-cols-2 gap-3">
             <StatCell
               label="Elevation gain"
-              value={stats.elevationGainMetres != null ? `${Math.round(stats.elevationGainMetres)} m` : '—'}
+              value={stats.elevationGainMetres != null ? formatElevation(stats.elevationGainMetres, elevationUnit) : '—'}
             />
             <StatCell
               label="Moving time"
@@ -467,7 +459,7 @@ function ActivityDetail({
             {stats.elevationLossMetres != null && (
               <StatCell
                 label="Elevation loss"
-                value={`${Math.round(stats.elevationLossMetres)} m`}
+                value={formatElevation(stats.elevationLossMetres, elevationUnit)}
               />
             )}
             {duration != null && (

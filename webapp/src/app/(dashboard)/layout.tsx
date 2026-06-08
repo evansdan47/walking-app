@@ -1,5 +1,6 @@
 import { DashboardHeader } from "@/components/dashboard-header";
 import { PaceProvider } from "@/components/pace-context";
+import { UserPreferencesProvider } from "@/components/user-preferences-context";
 import { PreviewProvider } from "@/components/preview-context";
 import { noIndexMetadata } from "@/lib/metadata";
 import type { Metadata } from "next";
@@ -14,6 +15,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
      */
     <PreviewProvider>
       <PaceProvider>
+      <UserPreferencesProvider>
       <div className="relative h-screen w-screen overflow-hidden">
         {/* ── Top navigation bar ── */}
         <DashboardHeader />
@@ -25,6 +27,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </div>
+      </UserPreferencesProvider>
       </PaceProvider>
     </PreviewProvider>
   );

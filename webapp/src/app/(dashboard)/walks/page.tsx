@@ -1,6 +1,8 @@
 'use client';
 
 import { api } from '@convex/_generated/api';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import { formatDistanceMetresShort } from '@/lib/format-units';
 import { useQuery } from 'convex/react';
 
 function formatDate(ts: number) {
@@ -12,11 +14,6 @@ function formatDate(ts: number) {
   });
 }
 
-function formatDistance(metres: number) {
-  const km = metres / 1000;
-  return km >= 1 ? `${km.toFixed(1)} km` : `${metres.toFixed(0)} m`;
-}
-
 function formatDuration(totalSeconds: number) {
   const h = Math.floor(totalSeconds / 3600);
   const m = Math.floor((totalSeconds % 3600) / 60);
@@ -25,6 +22,7 @@ function formatDuration(totalSeconds: number) {
 }
 
 export default function WalksPage() {
+  const { distanceUnit } = useUserPreferences();
   const walks = useQuery(api.walks.listForCurrentUser);
 
   if (walks === undefined) {
@@ -68,7 +66,7 @@ export default function WalksPage() {
                 {walk.stats && (
                   <div className="flex gap-3 shrink-0 text-sm">
                     <span className="bg-orange-50 text-orange-700 font-medium px-2.5 py-0.5 rounded-full text-xs">
-                      {formatDistance(walk.stats.distanceMetres)}
+                      {formatDistanceMetresShort(walk.stats.distanceMetres, distanceUnit)}
                     </span>
                     <span className="bg-gray-100 text-gray-500 font-medium px-2.5 py-0.5 rounded-full text-xs">
                       {formatDuration(walk.stats.durationSeconds)}

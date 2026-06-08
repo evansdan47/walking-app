@@ -4,6 +4,8 @@ import type { Id } from '@convex/_generated/dataModel';
 import { useEffect, useRef, useState } from 'react';
 
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import { formatDistanceMetresShort, formatElevationCompact } from '@/lib/format-units';
 import { buildRoutePolyline, routeDifficultyColor } from '@/lib/route-thumb';
 
 const ROUTE_THUMB_SIZE = 64;
@@ -45,11 +47,6 @@ function formatCardDate(ts: number) {
     day: 'numeric',
     month: 'short',
   });
-}
-
-function formatDistance(metres: number) {
-  if (metres >= 1000) return `${(metres / 1000).toFixed(1)} km`;
-  return `${Math.round(metres)} m`;
 }
 
 function formatDurationShort(seconds: number) {
@@ -183,6 +180,7 @@ export function WalkActivityCard({
   onView,
   onRemove,
 }: WalkActivityCardProps) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const [confirmRemove, setConfirmRemove] = useState(false);
   const isInProgress = walk.status === 'recording' || walk.status === 'paused';
 
@@ -281,7 +279,7 @@ export function WalkActivityCard({
                   <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                     <path d="M13 4v16M7 8l6-4 6 4" />
                   </svg>
-                  {formatDistance(walk.stats.distanceMetres)}
+                  {formatDistanceMetresShort(walk.stats.distanceMetres, distanceUnit)}
                 </span>
                 <span className="inline-flex items-center gap-1 text-xs text-gray-500">
                   <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -295,7 +293,7 @@ export function WalkActivityCard({
                     <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M4 18 L12 6 L20 18 Z" />
                     </svg>
-                    {Math.round(walk.stats.elevationGainMetres!)} m
+                    {formatElevationCompact(walk.stats.elevationGainMetres!, elevationUnit)}
                   </span>
                 )}
               </div>

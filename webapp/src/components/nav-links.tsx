@@ -3,11 +3,11 @@
 import { useRouter, useSearchParams } from 'next/navigation';
 import type { MouseEvent } from 'react';
 
+/** Community tab omitted until that mode ships. */
 const NAV_LINKS = [
   { mode: 'explore', label: 'Explore' },
   { mode: 'activity', label: 'Activity' },
   { mode: 'planner', label: 'Planner' },
-  { mode: 'community', label: 'Community' },
 ];
 
 /**

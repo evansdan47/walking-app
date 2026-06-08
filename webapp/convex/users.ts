@@ -9,6 +9,15 @@ import {
   mobileUpdateFromSync,
   type SessionSyncArgs,
 } from "./userSessionCore";
+import { preferencesPatchValidator } from "./userValidators";
+import {
+  aggregateLifetimeStats,
+  DEFAULT_PREFERENCES,
+  DEFAULT_SUBSCRIPTION,
+  mergeUserPreferences,
+  resolveUserPreferences,
+  resolveUserSubscription,
+} from "./userAccountCore";
 
 const clientValidator = v.union(v.literal("web"), v.literal("mobile"));
 const mobilePlatformValidator = v.union(v.literal("ios"), v.literal("android"));
@@ -54,6 +63,10 @@ async function syncCurrentUserHandler(
       ...(resolvedName !== undefined ? { name: resolvedName } : {}),
       ...(resolvedEmail !== undefined ? { email: resolvedEmail } : {}),
       ...loginPatch,
+      ...(!existing.subscription ? { subscription: DEFAULT_SUBSCRIPTION } : {}),
+      ...(!existing.preferences ? { preferences: DEFAULT_PREFERENCES } : {}),
+      ...(existing.createdAt === undefined ? { createdAt: now } : {}),
+      updatedAt: now,
     });
     userId = existing._id;
   } else {
@@ -62,6 +75,10 @@ async function syncCurrentUserHandler(
       ...(resolvedName !== undefined ? { name: resolvedName } : {}),
       ...(resolvedEmail !== undefined ? { email: resolvedEmail } : {}),
       ...loginPatch,
+      subscription: DEFAULT_SUBSCRIPTION,
+      preferences: DEFAULT_PREFERENCES,
+      createdAt: now,
+      updatedAt: now,
     });
   }
 
@@ -106,6 +123,37 @@ export const getCurrentUser = query({
         q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
+  },
+});
+
+/**
+ * Account hub summary with resolved preferences and subscription defaults.
+ */
+export const getAccountSummary = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    return {
+      userId: user._id,
+      name: user.name ?? null,
+      email: user.email ?? null,
+      preferences: resolveUserPreferences(user),
+      subscription: resolveUserSubscription(user),
+      statsCache: user.statsCache ?? null,
+      createdAt: user.createdAt ?? user._creationTime,
+      updatedAt: user.updatedAt ?? null,
+      isAdmin: user.isAdmin === true,
+    };
   },
 });
 
@@ -165,6 +213,89 @@ export const setMapFeatureFlags = mutation({
 });
 
 /**
+ * Lifetime aggregates from completed walks for the account overview.
+ */
+export const getLifetimeStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    const completedWalks = await ctx.db
+      .query("walks")
+      .withIndex("by_userId_and_status", (q) =>
+        q.eq("userId", user._id).eq("status", "completed"),
+      )
+      .collect();
+
+    return aggregateLifetimeStats(completedWalks);
+  },
+});
+
+/**
+ * Returns resolved preferences for the current user, or null if not signed in.
+ */
+export const getPreferences = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) return null;
+
+    return resolveUserPreferences(user);
+  },
+});
+
+/**
+ * Partially updates the current user's preferences (validated merge).
+ */
+export const updatePreferences = mutation({
+  args: {
+    preferences: preferencesPatchValidator,
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!existing) throw new Error("User not found");
+
+    const now = Date.now();
+    const merged = mergeUserPreferences(resolveUserPreferences(existing), args.preferences);
+
+    await ctx.db.patch(existing._id, {
+      preferences: merged,
+      ...(args.preferences.profile?.weightKg !== undefined
+        ? { weightKg: args.preferences.profile.weightKg }
+        : {}),
+      updatedAt: now,
+    });
+
+    return merged;
+  },
+});
+
+/**
  * Updates the current user's profile fields (name, weightKg).
  */
 export const updateProfile = mutation({
@@ -184,9 +315,23 @@ export const updateProfile = mutation({
       .unique();
     if (!existing) throw new Error("User not found");
 
+    const now = Date.now();
+    const preferences =
+      args.weightKg !== undefined
+        ? {
+            ...resolveUserPreferences(existing),
+            profile: {
+              ...resolveUserPreferences(existing).profile,
+              weightKg: args.weightKg,
+            },
+          }
+        : undefined;
+
     await ctx.db.patch(existing._id, {
       ...(args.name !== undefined ? { name: args.name } : {}),
       ...(args.weightKg !== undefined ? { weightKg: args.weightKg } : {}),
+      ...(preferences !== undefined ? { preferences } : {}),
+      updatedAt: now,
     });
   },
 });

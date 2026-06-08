@@ -2,7 +2,7 @@
 
 import { NavLinks } from '@/components/nav-links';
 import { usePreview } from '@/components/preview-context';
-import { UserButton } from '@clerk/nextjs';
+import { AccountMenuTrigger } from '@/components/account/account-menu-trigger';
 import Image from 'next/image';
 import Link from 'next/link';
 import { Suspense } from 'react';
@@ -43,7 +43,7 @@ export function DashboardHeader() {
 
         {/* Right: Account */}
         <div className="flex items-center justify-end shrink-0">
-          <UserButton />
+          <AccountMenuTrigger />
         </div>
       </div>
     </header>

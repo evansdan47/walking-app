@@ -19,6 +19,9 @@ import { PanelPacePicker } from '@/components/panel-pace-picker';
 import { usePace } from '@/components/pace-context';
 import { ACTIVITY_PROFILES, type ActivityPace } from '@/lib/activity-pace';
 import { usePanelWidth, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH, usePanelHeight, PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import type { DistanceUnit } from '@/lib/format-units';
+import { formatDistanceKmShort, formatElevation, formatElevationCompact } from '@/lib/format-units';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -158,8 +161,8 @@ function difficultyLevel(distKm: number, elevM: number): { label: string; color:
   return { label: 'Easy', color: '#2E7D32' };
 }
 
-function fmtDist(km: number): string {
-  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+function fmtDist(km: number, unit: DistanceUnit = 'km'): string {
+  return formatDistanceKmShort(km, unit);
 }
 
 /**
@@ -326,6 +329,7 @@ function FilterBar({
   maxDist: number; maxElev: number; maxDur: number;
   onOpenTagFilter: () => void;
 }) {
+  const { elevationUnit } = useUserPreferences();
   const active = isFilterActive(filter);
   const activeCount = [
     filter.distKm[0] > 0 || filter.distKm[1] !== Infinity,
@@ -391,7 +395,7 @@ function FilterBar({
             label="Elev. gain"
             min={0} max={maxElev} step={10}
             low={elevLow} high={elevHigh}
-            format={v => `${v} m`}
+            format={(v) => formatElevationCompact(v, elevationUnit)}
             onLow={v => setFilter({ ...filter, elevM: [v, filter.elevM[1]] })}
             onHigh={v => setFilter({ ...filter, elevM: [filter.elevM[0], v >= maxElev ? Infinity : v] })}
           />
@@ -504,6 +508,7 @@ function RoutePopupItem({
   onLeave?: () => void;
   displayColor: string;
 }) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const dist = route.stats?.distanceKm ?? 0;
   const elev = route.stats?.elevationGainM ?? 0;
   const diff = difficultyLevel(dist, elev);
@@ -540,14 +545,14 @@ function RoutePopupItem({
                 <polyline points="8,3 11,6 8,9" />
                 <polyline points="4,3 1,6 4,9" />
               </svg>
-              <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">{dist > 0 ? fmtDist(dist) : '—'}</span>
+              <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">{dist > 0 ? fmtDist(dist, distanceUnit) : '—'}</span>
             </div>
             <div className="flex flex-col items-center gap-0.5">
               <svg viewBox="0 0 12 12" className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                 <polygon points="1,11 6,2 11,11" />
                 <line x1="4" y1="6.5" x2="8" y2="6.5" />
               </svg>
-              <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">{elev > 0 ? `+${Math.round(elev)} m` : '—'}</span>
+              <span className="text-xs font-semibold text-gray-700 whitespace-nowrap">{elev > 0 ? `+${formatElevation(elev, elevationUnit)}` : '—'}</span>
             </div>
             <div className="flex flex-col items-center gap-0.5">
               <svg viewBox="0 0 12 12" className="w-3.5 h-3.5 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round">
@@ -1070,6 +1075,7 @@ interface ExploreElevProfileProps {
 }
 
 export function ExploreElevationProfile({ points, elevations, onHoverIndex }: ExploreElevProfileProps) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverNorm, setHoverNorm] = useState<number | null>(null);
 
@@ -1147,7 +1153,7 @@ export function ExploreElevationProfile({ points, elevations, onHoverIndex }: Ex
   const hoverSvgX = hoverNorm !== null ? hoverNorm * W : null;
   const hoverSvgY = hoverElev !== null ? yOf(hoverElev) : null;
 
-  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => fmtDist(totalDist * t));
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => fmtDist(totalDist * t, distanceUnit));
 
   if (!hasData) {
     return (
@@ -1192,7 +1198,7 @@ export function ExploreElevationProfile({ points, elevations, onHoverIndex }: Ex
               <line x1="4" y1="10" x2="6" y2="14" stroke="#2E7D32" strokeWidth="1.4" strokeLinecap="round" />
             </g>
             {hoverElev !== null && (() => {
-              const label = `${Math.round(hoverElev)} m`;
+              const label = formatElevationCompact(hoverElev, elevationUnit);
               const bw = label.length * 7.5 + 29;
               const bx = Math.max(bw / 2 + 2, Math.min(W - bw / 2 - 2, hoverSvgX));
               return (
@@ -1364,6 +1370,7 @@ interface SelectedRoutePanelProps {
 }
 
 function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeElevations, onElevHoverIdx, isAdmin, onEdit }: SelectedRoutePanelProps) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const dist = route.stats?.distanceKm ?? 0;
   const elev = route.stats?.elevationGainM ?? 0;
   const { pace } = usePace();
@@ -1575,11 +1582,11 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
           {/* Stats */}
           <div className="grid grid-cols-3 px-4 py-4 border-b border-gray-100">
             <div className="text-center">
-              <p className="text-base font-bold text-gray-900">{dist > 0 ? fmtDist(dist) : '—'}</p>
+              <p className="text-base font-bold text-gray-900">{dist > 0 ? fmtDist(dist, distanceUnit) : '—'}</p>
               <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">Length</p>
             </div>
             <div className="text-center border-x border-gray-100">
-              <p className="text-base font-bold text-gray-900">{elev > 0 ? `${Math.round(elev)} m` : '—'}</p>
+              <p className="text-base font-bold text-gray-900">{elev > 0 ? formatElevation(elev, elevationUnit) : '—'}</p>
               <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">Elev. gain</p>
             </div>
             <div className="text-center">

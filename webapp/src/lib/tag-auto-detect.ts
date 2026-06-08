@@ -4,6 +4,16 @@
  * @see docs/TaggingSystemRoadmap.md
  */
 
+import type { DistanceUnit, ElevationUnit } from '@/lib/format-units';
+import { formatDistanceKmShort, formatElevation, formatElevationCompact } from '@/lib/format-units';
+
+export type DisplayUnits = {
+  distance: DistanceUnit;
+  elevation: ElevationUnit;
+};
+
+const DEFAULT_DISPLAY_UNITS: DisplayUnits = { distance: 'km', elevation: 'metres' };
+
 export type RoutePoint = { lng: number; lat: number };
 export type RouteLeg = { points: RoutePoint[] };
 export type RouteStats = { distanceKm: number; elevationGainM: number };
@@ -164,18 +174,20 @@ function detectRouteStyle(legs: RouteLeg[], totalKm: number, out: TagSuggestion[
   }
 }
 
-function detectTerrain(stats: RouteStats, out: TagSuggestion[]) {
+function detectTerrain(stats: RouteStats, out: TagSuggestion[], units: DisplayUnits) {
   const { distanceKm, elevationGainM } = stats;
   if (distanceKm <= 0) return;
 
   const avgGrade = elevationGainM / (distanceKm * 1000);
+  const elevLabel = formatElevation(elevationGainM, units.elevation);
+  const distLabel = formatDistanceKmShort(distanceKm, units.distance);
 
   if (avgGrade < 0.025 && elevationGainM < 80) {
     addSuggestion(
       out,
       'terrain.flat',
       clamp01(0.85 - avgGrade * 10),
-      `Gentle profile (${elevationGainM} m gain over ${distanceKm.toFixed(1)} km)`,
+      `Gentle profile (${elevLabel} gain over ${distLabel})`,
       'stats.grade_flat',
     );
   } else if (avgGrade < 0.05) {
@@ -191,7 +203,7 @@ function detectTerrain(stats: RouteStats, out: TagSuggestion[]) {
       out,
       'terrain.hilly',
       clamp01(0.55 + (avgGrade - 0.05) * 4),
-      `Hilly (${elevationGainM} m gain, ${(avgGrade * 100).toFixed(1)}% avg grade)`,
+      `Hilly (${elevLabel} gain, ${(avgGrade * 100).toFixed(1)}% avg grade)`,
       'stats.grade_hilly',
     );
   } else if (avgGrade < 0.16) {
@@ -207,13 +219,13 @@ function detectTerrain(stats: RouteStats, out: TagSuggestion[]) {
       out,
       'terrain.mountainous',
       clamp01(0.65 + (avgGrade - 0.16) * 2),
-      `Mountainous (${elevationGainM} m gain over ${distanceKm.toFixed(1)} km)`,
+      `Mountainous (${elevLabel} gain over ${distLabel})`,
       'stats.grade_mountainous',
     );
   }
 
   if (elevationGainM >= 600) {
-    addSuggestion(out, 'terrain.mountainous', 0.8, `${elevationGainM} m total ascent`, 'stats.elevation_gain_high');
+    addSuggestion(out, 'terrain.mountainous', 0.8, `${elevLabel} total ascent`, 'stats.elevation_gain_high');
   }
 
   if (avgGrade > 0.22 || (elevationGainM > 400 && avgGrade > 0.15)) {
@@ -318,6 +330,7 @@ export function suggestTagsForRoute(args: {
   stats?: RouteStats;
   poiTypes?: PoiType[];
   minConfidence?: number;
+  displayUnits?: DisplayUnits;
 }): TagSuggestion[] {
   const legs = args.legs.filter((leg) => leg.points.length >= 2);
   if (legs.length === 0) return [];
@@ -328,11 +341,12 @@ export function suggestTagsForRoute(args: {
     elevationGainM: args.stats?.elevationGainM ?? 0,
   };
 
+  const units = args.displayUnits ?? DEFAULT_DISPLAY_UNITS;
   const out: TagSuggestion[] = [];
   detectRouteStyle(legs, stats.distanceKm, out);
 
   if (stats.distanceKm > 0) {
-    detectTerrain(stats, out);
+    detectTerrain(stats, out, units);
     detectDifficulty(stats, out);
   }
 

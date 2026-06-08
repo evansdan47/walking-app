@@ -11,6 +11,8 @@ import { ActivityOverlay, type ActivityWalkPhoto } from './activity-overlay';
 import { PlannerOverlay, SEGMENT_COLOURS, bearingDeg, densifyPoints, haversineKm, toGeoJSON, toMultiGeoJSON, type ChartRange, type Leg, type Point } from './planner-overlay';
 import { PLACE_TYPE_META } from './poi-add-form';
 import type { Id } from '@convex/_generated/dataModel';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import { elevationAxisLabel, formatDistanceKm, formatDistanceKmShort, formatElevationCompact } from '@/lib/format-units';
 
 // -- Planner initial state (module-scope so it�s a stable reference) --------------
 const INITIAL_LEGS: Leg[] = [
@@ -2074,7 +2076,8 @@ function ControlPointMarker({ index }: { index: number }) {
 
 /** Orange pill shown at the end of the elevation chart range selection on the map. */
 function RangeDistLabel({ distKm }: { distKm: number }) {
-  const label = distKm < 0.1 ? `${Math.round(distKm * 1000)} m` : `${distKm.toFixed(2)} km`;
+  const { distanceUnit } = useUserPreferences();
+  const label = formatDistanceKm(distKm, distanceUnit);
   return (
     <div
       style={{
@@ -2206,6 +2209,7 @@ function WalkPreviewHUD({
   onSpeedUp: () => void;
   onSpeedDown: () => void;
 }) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const svgRef = useRef<SVGSVGElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
@@ -2279,15 +2283,11 @@ function WalkPreviewHUD({
     return Math.max(0, Math.min((e.clientX - rect.left) / rect.width, 1));
   };
 
-  const distLabel = !chartData ? '' :
-    chartData.totalDist < 1 ? `${Math.round(chartData.totalDist * 1000)} m` : `${chartData.totalDist.toFixed(1)} km`;
+  const distLabel = !chartData ? '' : formatDistanceKmShort(chartData.totalDist, distanceUnit);
 
-  const fmtElev = (m: number) => `${Math.round(m)} m`;
+  const fmtElev = (m: number) => formatElevationCompact(m, elevationUnit);
 
-  const currentDistLabel = !chartData ? '' : (() => {
-    const d = progress * chartData.totalDist;
-    return d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(2)} km`;
-  })();
+  const currentDistLabel = !chartData ? '' : formatDistanceKm(progress * chartData.totalDist, distanceUnit);
 
   const camBtn = 'w-9 h-9 rounded-xl bg-white/12 hover:bg-white/22 active:scale-95 flex items-center justify-center transition-all text-white/80 hover:text-white shrink-0';
 
@@ -2308,7 +2308,7 @@ function WalkPreviewHUD({
               <span className="text-white font-semibold text-sm">Route preview</span>
               {distLabel && (
                 <span className="text-white/35 text-xs tabular-nums truncate">
-                  {distLabel}{chartData && chartData.elevGain > 0 ? ` � +${chartData.elevGain} m` : ''}
+                  {distLabel}{chartData && chartData.elevGain > 0 ? ` · +${formatElevationCompact(chartData.elevGain, elevationUnit)}` : ''}
                 </span>
               )}
             </div>
@@ -2378,8 +2378,10 @@ function WalkPreviewHUD({
                   <svg viewBox="0 0 16 16" className="w-3 h-3 text-white/45" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="8" y1="14" x2="8" y2="2"/><polyline points="4 6 8 2 12 6"/>
                   </svg>
-                  <span className="text-white font-bold text-sm leading-none tabular-nums">{currentElev}</span>
-                  <span className="text-white/40 text-[10px] leading-none">m alt</span>
+                  <span className="text-white font-bold text-sm leading-none tabular-nums">
+                    {formatElevationCompact(currentElev, elevationUnit)}
+                  </span>
+                  <span className="text-white/40 text-[10px] leading-none">{elevationAxisLabel(elevationUnit)} alt</span>
                 </>
               )}
             </div>

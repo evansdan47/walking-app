@@ -13,6 +13,9 @@ import { TagCategoryBrowser } from '@/components/tags/tag-category-browser';
 import { suggestTagsForRoute, type PoiType } from '@/lib/tag-auto-detect';
 import { AddPoiForm, PLACE_TYPE_META, type PendingPoi, type PlaceType } from './poi-add-form';
 import { usePanelWidth, MOBILE_BREAKPOINT } from '@/hooks/use-panel-width';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import type { DistanceUnit } from '@/lib/format-units';
+import { formatDistanceKm, formatElevation, formatElevationCompact, formatWeightKg } from '@/lib/format-units';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -130,8 +133,8 @@ export function densifyPoints(points: Point[], maxSpacingKm = 0.08): Point[] {
   return result;
 }
 
-function formatKm(km: number): string {
-  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(2)} km`;
+function formatKm(km: number, unit: DistanceUnit = 'km'): string {
+  return formatDistanceKm(km, unit);
 }
 
 /** Build a GeoJSON LineString from an array of Points. */
@@ -184,6 +187,7 @@ interface ElevationProfileProps {
 }
 
 function ElevationProfile({ points, elevations, externalHoverIdx, onHoverIndex, onRangeChange }: ElevationProfileProps) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const svgRef = useRef<SVGSVGElement>(null);
   const [hoverNorm, setHoverNorm] = useState<number | null>(null);
   const [dragStartNorm, setDragStartNorm] = useState<number | null>(null);
@@ -330,7 +334,7 @@ function ElevationProfile({ points, elevations, externalHoverIdx, onHoverIndex, 
     }
   }
 
-  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => formatKm(totalDist * t));
+  const xTicks = [0, 0.25, 0.5, 0.75, 1].map((t) => formatKm(totalDist * t, distanceUnit));
 
   if (!hasData) {
     return (
@@ -380,8 +384,8 @@ function ElevationProfile({ points, elevations, externalHoverIdx, onHoverIndex, 
             <line x1={dragHiNorm! * W} y1="0" x2={dragHiNorm! * W} y2={H} stroke="#FF9800" strokeWidth="1" strokeDasharray="3 2" opacity="0.6" />
             {dragElevDiff !== null && dragDistKm !== null && (() => {
               const midX = ((dragLoNorm! + dragHiNorm!) / 2) * W;
-              const elevLabel = `${dragElevDiff >= 0 ? '+' : ''}${Math.round(dragElevDiff)}m`;
-              const distLabel = formatKm(dragDistKm);
+              const elevLabel = `${dragElevDiff >= 0 ? '+' : ''}${formatElevationCompact(dragElevDiff, elevationUnit)}`;
+              const distLabel = formatKm(dragDistKm, distanceUnit);
               // Single horizontal strip: [↔ distLabel]  [△ elevLabel]
               // Layout: 8px left pad | 14px arrow icon | distText | 10px gap | 14px mountain icon | elevText | 8px right pad
               const bw = 54 + (distLabel.length + elevLabel.length) * 7.5;
@@ -428,7 +432,7 @@ function ElevationProfile({ points, elevations, externalHoverIdx, onHoverIndex, 
             </g>
             {/* Elevation label — above the chart with mountain icon */}
             {hoverElev !== null && (() => {
-              const label = `${Math.round(hoverElev)}m`;
+              const label = formatElevationCompact(hoverElev, elevationUnit);
               const bw = label.length * 7.5 + 29;
               const bx = Math.max(bw / 2 + 2, Math.min(W - bw / 2 - 2, hoverSvgX));
               return (
@@ -444,7 +448,7 @@ function ElevationProfile({ points, elevations, externalHoverIdx, onHoverIndex, 
             })()}
             {/* Distance label — below the chart overlaying x-axis, with bidirectional arrow icon */}
             {hoverDist !== null && (() => {
-              const label = formatKm(hoverDist);
+              const label = formatKm(hoverDist, distanceUnit);
               const bw = label.length * 7.5 + 29;
               const bx = Math.max(bw / 2 + 2, Math.min(W - bw / 2 - 2, hoverSvgX));
               return (
@@ -473,6 +477,7 @@ function ElevationProfile({ points, elevations, externalHoverIdx, onHoverIndex, 
 // ── Segment row ─────────────────────────────────────────────────────────────
 
 function LegRow({ leg, distKm, timeHours, onDelete }: { leg: Leg; distKm: number; timeHours: number; onDelete: () => void }) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   return (
     <div className="flex items-center gap-3 border border-gray-200 rounded-xl px-4 py-3">
       <div className="flex items-center gap-1.5">
@@ -482,7 +487,7 @@ function LegRow({ leg, distKm, timeHours, onDelete }: { leg: Leg; distKm: number
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-slate truncate">{leg.name}</p>
         <p className="text-xs text-slate-light">
-          {formatKm(distKm)} · {Math.round(distKm * 15)} m elev · {ActivityPace.formatHours(timeHours)}
+          {formatKm(distKm, distanceUnit)} · {formatElevation(distKm * 15, elevationUnit)} elev · {ActivityPace.formatHours(timeHours)}
         </p>
       </div>
       <button onClick={onDelete} className="w-6 h-6 flex items-center justify-center text-slate-300 hover:text-slate-500 rounded-full hover:bg-gray-100 transition-colors">
@@ -774,6 +779,7 @@ function PlannerSidebar({
 }) {
   const [expandedWpts, setExpandedWpts] = useState<Set<number>>(new Set());
   const { pace: selectedActivity } = usePace();
+  const { distanceUnit, elevationUnit, weightUnit, weightKg: prefWeightKg, showCalories } = useUserPreferences();
   // Leg pending confirmation before deletion. null = no dialog shown.
   const [pendingDeleteLeg, setPendingDeleteLeg] = useState<Leg | null>(null);
 
@@ -856,10 +862,9 @@ function PlannerSidebar({
   }, [allFlat, flatToElev, elevations, cumTimes, elevGain, totalDist]);
 
   // User weight for calorie calculation (default 70 kg if not set).
-  const currentUser = useQuery(api.users.getCurrentUser);
-  const updateProfile = useMutation(api.users.updateProfile);
-  const weightKg = currentUser?.weightKg ?? 70;
-  const usingDefaultWeight = currentUser?.weightKg === undefined;
+  const updatePreferences = useMutation(api.users.updatePreferences);
+  const weightKg = prefWeightKg ?? 70;
+  const usingDefaultWeight = prefWeightKg === undefined;
   const grossKcal = routeGrade !== null ? Math.round(routeGrade.metHours * weightKg) : null;
   const netKcal = routeGrade !== null ? Math.round(routeGrade.netMetHours * weightKg) : null;
   const baselineKcal = grossKcal !== null && netKcal !== null ? grossKcal - netKcal : null;
@@ -907,11 +912,11 @@ function PlannerSidebar({
         {/* Row 1: Length / Elev. gain / Est. time */}
         <div className="grid grid-cols-3 divide-x divide-gray-100">
           <div className="text-center pr-3">
-            <p className="text-base font-bold text-slate">{totalDist > 0 ? formatKm(totalDist) : '\u2014'}</p>
+            <p className="text-base font-bold text-slate">{totalDist > 0 ? formatKm(totalDist, distanceUnit) : '\u2014'}</p>
             <p className="text-[10px] text-slate-light uppercase tracking-wider mt-0.5">Length</p>
           </div>
           <div className="text-center px-3">
-            <p className="text-base font-bold text-slate">{totalDist > 0 ? `${Math.round(elevGain)} m` : '\u2014'}</p>
+            <p className="text-base font-bold text-slate">{totalDist > 0 ? formatElevation(elevGain, elevationUnit) : '\u2014'}</p>
             <p className="text-[10px] text-slate-light uppercase tracking-wider mt-0.5">Elev. gain</p>
           </div>
           <div className="text-center pl-3">
@@ -924,7 +929,7 @@ function PlannerSidebar({
 
         {/* Row 2: Energy / Active Calories / Grade — only shown once route has data */}
         {routeGrade && (
-          <div className="grid grid-cols-3 divide-x divide-gray-100 mt-3 pt-3 border-t border-gray-100">
+          <div className={`grid ${showCalories ? 'grid-cols-3' : 'grid-cols-2'} divide-x divide-gray-100 mt-3 pt-3 border-t border-gray-100`}>
 
             {/* Energy (MET-hrs) */}
             <div className="text-center pr-3">
@@ -936,26 +941,28 @@ function PlannerSidebar({
             </div>
 
             {/* Active Calories */}
-            <div className="text-center px-3">
-              {netKcal !== null ? (
-                <>
-                  <p className="text-base font-bold text-slate">~{netKcal.toLocaleString()} kcal</p>
-                  <p className="text-[10px] text-slate-light uppercase tracking-wider mt-0.5 flex items-center justify-center gap-0.5">
-                    Active Calories
-                    <InfoTooltip text={`Extra effort above resting: ~${netKcal} kcal. Baseline (what you'd burn at rest): ~${baselineKcal} kcal. Gross total: ~${grossKcal} kcal.`} />
-                  </p>
-                  <p className="text-[10px] text-slate-light mt-1">
-                    {usingDefaultWeight ? '70 kg' : `${currentUser!.weightKg} kg`} ·{' '}
-                    <button
-                      onClick={() => setWeightDialogOpen(true)}
-                      className="text-brand hover:underline focus-visible:outline-none"
-                    >
-                      Edit →
-                    </button>
-                  </p>
-                </>
-              ) : null}
-            </div>
+            {showCalories && (
+              <div className="text-center px-3">
+                {netKcal !== null ? (
+                  <>
+                    <p className="text-base font-bold text-slate">~{netKcal.toLocaleString()} kcal</p>
+                    <p className="text-[10px] text-slate-light uppercase tracking-wider mt-0.5 flex items-center justify-center gap-0.5">
+                      Active Calories
+                      <InfoTooltip text={`Extra effort above resting: ~${netKcal} kcal. Baseline (what you'd burn at rest): ~${baselineKcal} kcal. Gross total: ~${grossKcal} kcal.`} />
+                    </p>
+                    <p className="text-[10px] text-slate-light mt-1">
+                      {usingDefaultWeight ? formatWeightKg(70, weightUnit) : formatWeightKg(weightKg, weightUnit)} ·{' '}
+                      <button
+                        onClick={() => setWeightDialogOpen(true)}
+                        className="text-brand hover:underline focus-visible:outline-none"
+                      >
+                        Edit →
+                      </button>
+                    </p>
+                  </>
+                ) : null}
+              </div>
+            )}
 
             {/* Grade */}
             <div className="text-center pl-3">
@@ -968,7 +975,7 @@ function PlannerSidebar({
                   'bg-red-100 text-red-800'
                 }`}>{routeGrade.label}</span>
                 {routeGrade.hasSustainedClimb && (
-                  <span title="Contains a sustained climb (\u2265200 m gain at \u22658% gradient)" className="text-amber-500">
+                  <span title={`Contains a sustained climb (\u2265${formatElevationCompact(200, elevationUnit)} gain at \u22658% gradient)`} className="text-amber-500">
                     <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-label="Sustained climb">
                       <path d="M3 17 L8 9 L13 13 L18 5" />
                       <polyline points="21 5 18 5 18 8" />
@@ -987,8 +994,10 @@ function PlannerSidebar({
       <SetWeightDialog
         open={weightDialogOpen}
         onClose={() => setWeightDialogOpen(false)}
-        onSave={(kg) => updateProfile({ weightKg: kg })}
-        currentWeightKg={currentUser?.weightKg}
+        onSave={async (kg) => {
+          await updatePreferences({ preferences: { profile: { weightKg: kg } } });
+        }}
+        currentWeightKg={prefWeightKg}
       />
 
       {/* ── Elevation profile — scoped to the active leg ── */}
@@ -1031,7 +1040,7 @@ function PlannerSidebar({
                 >
                   <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: leg.color }} />
                   <span>{leg.name}</span>
-                  <span className="font-normal text-slate-light ml-0.5">{formatKm(totalKm(leg.points))}</span>
+                  <span className="font-normal text-slate-light ml-0.5">{formatKm(totalKm(leg.points), distanceUnit)}</span>
                   <button
                     className="w-4 h-4 ml-0.5 flex items-center justify-center rounded-full hover:bg-black/10 text-current opacity-60 hover:opacity-100 transition-all"
                     aria-label={`Remove ${leg.name}`}
@@ -1193,12 +1202,12 @@ function PlannerSidebar({
                               </p>
                             </div>
                             <div className="w-14 text-right">
-                              <p className="text-xs font-semibold text-slate leading-none">{formatKm(distKm)}</p>
+                              <p className="text-xs font-semibold text-slate leading-none">{formatKm(distKm, distanceUnit)}</p>
                             </div>
                             <div className="w-12 text-right">
                               <p className="text-xs font-semibold text-slate leading-none">
                                 {elevations.length > 0 && elevations[flatToElev[flatIdx]] !== undefined
-                                  ? `${Math.round(elevations[flatToElev[flatIdx]])} m`
+                                  ? formatElevationCompact(elevations[flatToElev[flatIdx]]!, elevationUnit)
                                   : '—'}
                               </p>
                             </div>
@@ -1259,12 +1268,12 @@ function PlannerSidebar({
                               <div className="shrink-0 flex gap-2 pl-2 border-l border-gray-100">
                                 <div className="w-10" />{/* bearing — n/a */}
                                 <div className="w-14 text-right">
-                                  <p className="text-xs font-semibold text-slate leading-none">{formatKm(np.distKm)}</p>
+                                  <p className="text-xs font-semibold text-slate leading-none">{formatKm(np.distKm, distanceUnit)}</p>
                                 </div>
                                 <div className="w-12 text-right">
                                   <p className="text-xs font-semibold text-slate leading-none">
                                     {elevations.length > 0 && elevations[flatToElev[np.flatIdx]] !== undefined
-                                      ? `${Math.round(elevations[flatToElev[np.flatIdx]])} m`
+                                      ? formatElevationCompact(elevations[flatToElev[np.flatIdx]]!, elevationUnit)
                                       : '—'}
                                   </p>
                                 </div>
@@ -1998,6 +2007,7 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
   pendingPois: PendingPoi[];
   editingRouteId?: Id<'plannedRoutes'> | null;
 }) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const saveRoute = useMutation(api.planned_routes.save);
   const updateRoute = useMutation(api.planned_routes.update);
   const submitCreatorTags = useMutation(api.tags.submitCreatorTags);
@@ -2031,9 +2041,10 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
           elevationGainM: elevGainM,
         },
         poiTypes,
+        displayUnits: { distance: distanceUnit, elevation: elevationUnit },
       }).map((s) => s.slug),
     );
-  }, [open, legs, totalDistKm, elevGainM, pendingPois]);
+  }, [open, legs, totalDistKm, elevGainM, pendingPois, distanceUnit, elevationUnit]);
 
   useEffect(() => {
     if (!open) {
@@ -2170,9 +2181,7 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
 
   if (!open) return null;
 
-  const distLabel = totalDistKm < 1
-    ? `${Math.round(totalDistKm * 1000)} m`
-    : `${totalDistKm.toFixed(1)} km`;
+  const distLabel = formatDistanceKm(totalDistKm, distanceUnit);
 
   return (
     <div
@@ -2187,7 +2196,7 @@ function SaveRouteDialog({ open, onClose, onSaved, legs, totalDistKm, elevGainM,
         <div className="px-5 pt-5 pb-5 overflow-y-auto min-h-0">
           <h2 id="save-route-title" className="text-base font-bold text-slate mb-0.5">{editingRouteId ? 'Update route' : 'Save route'}</h2>
           <p className="text-[11px] text-slate-light mb-4">
-            {distLabel}{elevGainM > 0 ? ` · +${Math.round(elevGainM)} m elevation` : ''}
+            {distLabel}{elevGainM > 0 ? ` · +${formatElevation(elevGainM, elevationUnit)} elevation` : ''}
           </p>
 
           <div className="flex flex-col gap-3 mb-4">

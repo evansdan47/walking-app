@@ -9,6 +9,8 @@ import { useMemo } from 'react';
 import { usePace } from '@/components/pace-context';
 import { ACTIVITY_PROFILES, type ActivityPace } from '@/lib/activity-pace';
 import { formatDaysAgo, formatWalkDateTime, formatWalkedOnDate } from '@/lib/walk-date';
+import { useUserPreferences } from '@/components/user-preferences-context';
+import { formatDistanceMetresShort, formatElevation, formatPace as formatPaceUnit } from '@/lib/format-units';
 
 type RouteWalkHistoryProps = {
   plannedRouteId: Id<'plannedRoutes'>;
@@ -26,27 +28,12 @@ function fmtTime(km: number, elevM: number, activity: ActivityPace): string {
   return m === 0 ? `${h} h` : `${h} h ${m} min`;
 }
 
-function formatDistanceM(metres: number | undefined): string {
-  if (metres === undefined || metres <= 0) return '—';
-  if (metres >= 1000) return `${(metres / 1000).toFixed(1)} km`;
-  return `${Math.round(metres)} m`;
-}
-
 function formatDuration(seconds: number | undefined): string {
   if (seconds === undefined || seconds <= 0) return '—';
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
-}
-
-function formatPace(secsPerKm: number | null | undefined): string {
-  if (secsPerKm === null || secsPerKm === undefined || !Number.isFinite(secsPerKm) || secsPerKm <= 0) {
-    return '—';
-  }
-  const m = Math.floor(secsPerKm / 60);
-  const s = Math.round(secsPerKm % 60);
-  return `${m}:${s.toString().padStart(2, '0')}/km`;
 }
 
 function paceFromWalk(
@@ -142,6 +129,7 @@ function RouteWalkHistoryTable({
   routeElevationM: number;
   onOpenWalk: (walkId: Id<'walks'>) => void;
 }) {
+  const { distanceUnit, elevationUnit } = useUserPreferences();
   const { pace } = usePace();
   const activity = ACTIVITY_PROFILES[pace];
   const estTime = fmtTime(routeDistanceKm, routeElevationM, activity);
@@ -196,16 +184,21 @@ function RouteWalkHistoryTable({
                     {formatWalkDateTime(walk.startedAt)}
                   </td>
                   <td className="py-2.5 px-2 text-right text-gray-700 tabular-nums">
-                    {formatDistanceM(walk.stats?.distanceMetres)}
+                    {walk.stats?.distanceMetres
+                      ? formatDistanceMetresShort(walk.stats.distanceMetres, distanceUnit)
+                      : '—'}
                   </td>
                   <td className="py-2.5 px-2 text-right text-gray-700 tabular-nums">
-                    {elev != null && elev > 0 ? `${Math.round(elev)} m` : '—'}
+                    {elev != null && elev > 0 ? formatElevation(elev, elevationUnit) : '—'}
                   </td>
                   <td className="py-2.5 px-2 text-right text-gray-700 tabular-nums">
                     {formatDuration(walk.stats?.movingTimeSeconds)}
                   </td>
                   <td className="py-2.5 pl-2 text-right text-gray-600 tabular-nums">
-                    {formatPace(paceFromWalk(walk.stats))}
+                    {(() => {
+                      const p = paceFromWalk(walk.stats);
+                      return p != null ? formatPaceUnit(p, distanceUnit) : '—';
+                    })()}
                   </td>
                 </tr>
               );
@@ -214,18 +207,18 @@ function RouteWalkHistoryTable({
               <tr className="bg-gray-50/80">
                 <td className="py-2 pr-2 pl-2 font-semibold text-gray-600">Average</td>
                 <td className="text-right py-2 px-2 font-semibold text-gray-800 tabular-nums">
-                  {formatDistanceM(averages.distanceMetres)}
+                  {formatDistanceMetresShort(averages.distanceMetres, distanceUnit)}
                 </td>
                 <td className="text-right py-2 px-2 font-semibold text-gray-800 tabular-nums">
                   {averages.elevationGainMetres > 0
-                    ? `${Math.round(averages.elevationGainMetres)} m`
+                    ? formatElevation(averages.elevationGainMetres, elevationUnit)
                     : '—'}
                 </td>
                 <td className="text-right py-2 px-2 font-semibold text-gray-800 tabular-nums">
                   {formatDuration(averages.movingTimeSeconds)}
                 </td>
                 <td className="text-right py-2 pl-2 font-semibold text-gray-800 tabular-nums">
-                  {formatPace(averages.avgPace)}
+                  {averages.avgPace != null ? formatPaceUnit(averages.avgPace, distanceUnit) : '—'}
                 </td>
               </tr>
             )}
