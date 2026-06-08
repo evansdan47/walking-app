@@ -118,10 +118,20 @@ Admin summary: `experiments.adminGetSummary({ key: 'walk_tagging_ui' })` — ass
 
 **Pilot checklist**
 
-1. `adminSeedDefaults`
-2. `adminUpdateConfig({ key: 'walk_tagging_ui', enabled: true })`
-3. Optionally set `TAGGING_EXPERIMENTS_ENABLED=true` in Convex deployment env
-4. Use `adminSetUserVariant` to test each UI arm internally
+1. In the Convex dashboard, **Authenticate** with the same account you use in the app (Functions → identity picker).
+2. On your row in **Data → users**, set `isAdmin` to `true` (required before any `admin*` mutation).
+3. Run `experiments.adminSeedDefaults` (creates `walk_tagging_ui` in `experimentConfigs`).
+4. Run `experiments.adminUpdateConfig({ key: 'walk_tagging_ui', enabled: true })`.
+5. Optionally set `TAGGING_EXPERIMENTS_ENABLED=true` in Convex deployment env.
+6. Use `adminSetUserVariant` to test each UI arm internally.
+
+### Troubleshooting admin mutations
+
+| Error | Cause | Fix |
+|-------|--------|-----|
+| `Not authenticated` | No identity on the function run | Use **Authenticate** in the Convex dashboard (or run from the signed-in app). |
+| `User not found` | Identity exists but no `users` row (rare for admin mutations after deploy) | Run `users.upsertCurrentUser` once, or re-run the admin mutation (auto-creates on mutations). |
+| `Admin access required` | User row exists but `isAdmin` is not `true` | Data → users → set `isAdmin: true` on your account. |
 
 ## Key files
 

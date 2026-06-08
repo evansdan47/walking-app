@@ -170,6 +170,107 @@ export const getRouteTagSummary = query({
   },
 });
 
+/** Tag rollups + filter scoring for Explore (web + mobile). */
+export const getExploreTagEnrichment = query({
+  args: {
+    plannedRouteIds: v.array(v.id('plannedRoutes')),
+    filterTagSlugs: v.optional(v.array(v.string())),
+    matchAll: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const filterSlugs = args.filterTagSlugs ?? [];
+    const filterSlugSet = new Set(filterSlugs);
+    const matchAll = args.matchAll ?? false;
+
+    let filterTagDefs: Doc<'tagDefinitions'>[] = [];
+    if (filterSlugSet.size > 0) {
+      const active = await ctx.db
+        .query('tagDefinitions')
+        .withIndex('by_isActive', (q) => q.eq('isActive', true))
+        .collect();
+      filterTagDefs = active.filter((def) => filterSlugSet.has(def.slug));
+    }
+
+    const results: Array<{
+      plannedRouteId: Id<'plannedRoutes'>;
+      score: number;
+      matchedSlugs: string[];
+      topTags: Array<{ slug: string; label: string }>;
+      tagCount: number;
+      passesFilter: boolean;
+    }> = [];
+
+    for (const plannedRouteId of args.plannedRouteIds) {
+      const summaries = await ctx.db
+        .query('routeTagSummaries')
+        .withIndex('by_plannedRouteId', (q) => q.eq('plannedRouteId', plannedRouteId))
+        .collect();
+
+      const displayable: Array<{
+        slug: string;
+        label: string;
+        confidenceScore: number;
+        creatorConfirmed: boolean;
+      }> = [];
+
+      for (const summary of summaries) {
+        const def = await ctx.db.get(summary.tagId);
+        if (!def || !def.isActive) continue;
+        if (
+          !shouldDisplayRouteTag(
+            def.kind,
+            summary.confirmationCount,
+            summary.creatorConfirmed,
+          )
+        ) {
+          continue;
+        }
+        displayable.push({
+          slug: def.slug,
+          label: def.label,
+          confidenceScore: summary.confidenceScore,
+          creatorConfirmed: summary.creatorConfirmed,
+        });
+      }
+
+      displayable.sort((a, b) => b.confidenceScore - a.confidenceScore);
+      const topTags = displayable.slice(0, 3).map((t) => ({
+        slug: t.slug,
+        label: t.label,
+      }));
+
+      const bySlug = new Map(displayable.map((d) => [d.slug, d]));
+      const matchedSlugs: string[] = [];
+      let score = 0;
+      for (const def of filterTagDefs) {
+        const match = bySlug.get(def.slug);
+        if (match) {
+          matchedSlugs.push(def.slug);
+          score += match.confidenceScore + (match.creatorConfirmed ? 0.25 : 0);
+        }
+      }
+
+      const filtering = filterSlugSet.size > 0 && filterTagDefs.length > 0;
+      const passesFilter = !filtering
+        ? true
+        : matchAll
+          ? matchedSlugs.length === filterTagDefs.length
+          : matchedSlugs.length > 0;
+
+      results.push({
+        plannedRouteId,
+        score,
+        matchedSlugs,
+        topTags,
+        tagCount: displayable.length,
+        passesFilter,
+      });
+    }
+
+    return results;
+  },
+});
+
 export type ResolvedTagSuggestion = {
   tagId: Id<'tagDefinitions'>;
   slug: string;

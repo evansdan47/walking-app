@@ -153,6 +153,7 @@ type Mode = 'explore' | 'planner' | 'activity';
 export function MapShell() {
   const searchParams = useSearchParams();
   const mode = (searchParams.get('mode') ?? 'explore') as Mode;
+  const activityWalkId = searchParams.get('walkId') as Id<'walks'> | null;
   const router = useRouter();
   const { setIsPreviewing } = usePreview();
 
@@ -1757,6 +1758,7 @@ export function MapShell() {
         )}
         {mode === 'activity' && !isFlyby && !isWalkPreview && (
           <ActivityOverlay
+            initialWalkId={activityWalkId}
             onTrackChange={setActivityTrack}
             onFitBounds={handleFitBounds}
             onElevHoverIdx={setActivityElevHoverIdx}

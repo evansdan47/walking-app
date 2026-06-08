@@ -5,6 +5,19 @@ import { useMutation, useQuery } from 'convex/react';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { WEB_APP_VERSION } from '@/lib/app-version';
+
+function formatLoginAt(ts: number | undefined): string {
+  if (ts === undefined) return '—';
+  return new Date(ts).toLocaleString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export default function ProfilePage() {
   const currentUser = useQuery(api.users.getCurrentUser);
   const updateProfile = useMutation(api.users.updateProfile);
@@ -98,6 +111,26 @@ export default function ProfilePage() {
               Used to estimate calorie burn in the route planner. Not shared with anyone.
             </p>
           </div>
+
+          {/* Session info */}
+          {currentUser && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-xs text-slate-light space-y-1.5">
+              <p className="font-medium text-slate text-sm">Session</p>
+              <p>Web app version: {WEB_APP_VERSION}</p>
+              <p>Last web sign-in: {formatLoginAt(currentUser.lastLoginAtWeb)}</p>
+              {currentUser.lastLoginAtMobile !== undefined && (
+                <p>
+                  Last mobile sign-in: {formatLoginAt(currentUser.lastLoginAtMobile)}
+                  {currentUser.lastMobileBuild !== undefined
+                    ? ` · build ${currentUser.lastMobileBuild}`
+                    : ''}
+                  {currentUser.lastMobileVersion
+                    ? ` (${currentUser.lastMobileVersion})`
+                    : ''}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Submit */}
           <div className="flex items-center gap-3 pt-1">

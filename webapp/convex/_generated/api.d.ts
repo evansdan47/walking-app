@@ -8,6 +8,8 @@
  * @module
  */
 
+import type * as appRelease from "../appRelease.js";
+import type * as appReleaseCore from "../appReleaseCore.js";
 import type * as authHelpers from "../authHelpers.js";
 import type * as device_logs from "../device_logs.js";
 import type * as experimentCore from "../experimentCore.js";
@@ -25,6 +27,7 @@ import type * as tagTaxonomy from "../tagTaxonomy.js";
 import type * as tagValidators from "../tagValidators.js";
 import type * as tags from "../tags.js";
 import type * as track_points from "../track_points.js";
+import type * as userSessionCore from "../userSessionCore.js";
 import type * as users from "../users.js";
 import type * as waitlist from "../waitlist.js";
 import type * as walk_photos from "../walk_photos.js";
@@ -37,6 +40,8 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  appRelease: typeof appRelease;
+  appReleaseCore: typeof appReleaseCore;
   authHelpers: typeof authHelpers;
   device_logs: typeof device_logs;
   experimentCore: typeof experimentCore;
@@ -54,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   tagValidators: typeof tagValidators;
   tags: typeof tags;
   track_points: typeof track_points;
+  userSessionCore: typeof userSessionCore;
   users: typeof users;
   waitlist: typeof waitlist;
   walk_photos: typeof walk_photos;

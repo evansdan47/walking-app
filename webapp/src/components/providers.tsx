@@ -1,5 +1,6 @@
 'use client';
 
+import { UserSessionSync } from '@/components/user-session-sync';
 import { ClerkProvider, useAuth } from '@clerk/nextjs';
 import { ConvexReactClient } from 'convex/react';
 import { ConvexProviderWithClerk } from 'convex/react-clerk';
@@ -12,6 +13,7 @@ function ConvexClientProvider({ children }: { children: React.ReactNode }) {
   );
   return (
     <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+      <UserSessionSync />
       {children}
     </ConvexProviderWithClerk>
   );

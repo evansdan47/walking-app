@@ -9,6 +9,7 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "buildNumber": "1",
       "supportsTablet": true,
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Used to record your walk route.",
@@ -22,6 +23,7 @@
       "bundleIdentifier": "com.rambleio.app"
     },
     "android": {
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#122518",
         "foregroundImage": "./assets/images/android-icon-foreground.png",

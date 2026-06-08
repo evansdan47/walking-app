@@ -408,9 +408,9 @@ Walk completion is primarily mobile. **Required for full system:**
 
 ### 6.3 Deliverables
 
-- [ ] Tag filter UI  
-- [ ] Backend filter query  
-- [ ] Empty state when no routes match tags  
+- [x] Tag filter UI (web FilterBar + mobile header filter modal)  
+- [x] Backend filter query (`tags.getExploreTagEnrichment`)  
+- [x] Empty state when no routes match tags  
 
 ---
 

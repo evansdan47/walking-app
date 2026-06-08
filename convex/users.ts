@@ -1,47 +1,94 @@
 import { v } from "convex/values";
 
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import type { MobileBuildCheckResult } from "./appReleaseCore";
+import {
+  buildLoginPatch,
+  mobileUpdateFromSync,
+  type SessionSyncArgs,
+} from "./userSessionCore";
+
+const clientValidator = v.union(v.literal("web"), v.literal("mobile"));
+const mobilePlatformValidator = v.union(v.literal("ios"), v.literal("android"));
+
+export type SessionSyncResult = {
+  userId: Id<"users">;
+  mobileUpdate: MobileBuildCheckResult | null;
+};
+
+async function getPolicyForPlatform(
+  ctx: Pick<MutationCtx, "db">,
+  platform: "ios" | "android",
+): Promise<Doc<"mobileReleasePolicies"> | null> {
+  return await ctx.db
+    .query("mobileReleasePolicies")
+    .withIndex("by_platform", (q) => q.eq("platform", platform))
+    .unique();
+}
+
+async function syncCurrentUserHandler(
+  ctx: MutationCtx,
+  args: SessionSyncArgs,
+): Promise<SessionSyncResult> {
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) throw new Error("Not authenticated");
+
+  const now = Date.now();
+  const loginPatch = buildLoginPatch(args, now);
+  const resolvedName = args.name ?? identity.name;
+  const resolvedEmail = args.email ?? identity.email;
+
+  const existing = await ctx.db
+    .query("users")
+    .withIndex("by_tokenIdentifier", (q) =>
+      q.eq("tokenIdentifier", identity.tokenIdentifier),
+    )
+    .unique();
+
+  let userId: Id<"users">;
+
+  if (existing) {
+    await ctx.db.patch(existing._id, {
+      ...(resolvedName !== undefined ? { name: resolvedName } : {}),
+      ...(resolvedEmail !== undefined ? { email: resolvedEmail } : {}),
+      ...loginPatch,
+    });
+    userId = existing._id;
+  } else {
+    userId = await ctx.db.insert("users", {
+      tokenIdentifier: identity.tokenIdentifier,
+      ...(resolvedName !== undefined ? { name: resolvedName } : {}),
+      ...(resolvedEmail !== undefined ? { email: resolvedEmail } : {}),
+      ...loginPatch,
+    });
+  }
+
+  let mobileUpdate: MobileBuildCheckResult | null = null;
+  if (args.client === "mobile" && args.mobileBuild !== undefined && args.mobilePlatform) {
+    const policy = await getPolicyForPlatform(ctx, args.mobilePlatform);
+    mobileUpdate = mobileUpdateFromSync(args, policy);
+  }
+
+  return { userId, mobileUpdate };
+}
 
 /**
- * Creates or updates the current user's record in the users table.
- * Called once from the app shortly after sign-in is confirmed.
- * Uses tokenIdentifier as the stable identity key (not subject alone).
+ * Creates or updates the current user's record and records last login per client.
+ * Called after Clerk sign-in from web or mobile.
  */
 export const upsertCurrentUser = mutation({
   args: {
     name: v.optional(v.string()),
     email: v.optional(v.string()),
+    client: v.optional(clientValidator),
+    mobileBuild: v.optional(v.number()),
+    mobileVersion: v.optional(v.string()),
+    mobilePlatform: v.optional(mobilePlatformValidator),
+    webAppVersion: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (!identity) throw new Error("Not authenticated");
-
-    const existing = await ctx.db
-      .query("users")
-      .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
-      )
-      .unique();
-
-    if (existing) {
-      // Update name/email if they have changed
-      const resolvedName = args.name ?? identity.name ?? existing.name;
-      const resolvedEmail = args.email ?? identity.email ?? existing.email;
-      await ctx.db.patch(existing._id, {
-        ...(resolvedName !== undefined ? { name: resolvedName } : {}),
-        ...(resolvedEmail !== undefined ? { email: resolvedEmail } : {}),
-      });
-      return existing._id;
-    }
-
-    const insertName = args.name ?? identity.name ?? undefined;
-    const insertEmail = args.email ?? identity.email ?? undefined;
-    return await ctx.db.insert("users", {
-      tokenIdentifier: identity.tokenIdentifier,
-      ...(insertName !== undefined ? { name: insertName } : {}),
-      ...(insertEmail !== undefined ? { email: insertEmail } : {}),
-    });
-  },
+  handler: async (ctx, args) => syncCurrentUserHandler(ctx, args),
 });
 
 /**
@@ -56,7 +103,7 @@ export const getCurrentUser = query({
     return await ctx.db
       .query("users")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
   },
@@ -74,7 +121,7 @@ export const getMapFeatureFlags = query({
     const user = await ctx.db
       .query("users")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
     if (!user) return null;
@@ -104,7 +151,7 @@ export const setMapFeatureFlags = mutation({
     const user = await ctx.db
       .query("users")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
     if (!user) throw new Error("User not found");
@@ -132,7 +179,7 @@ export const updateProfile = mutation({
     const existing = await ctx.db
       .query("users")
       .withIndex("by_tokenIdentifier", (q) =>
-        q.eq("tokenIdentifier", identity.tokenIdentifier)
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
       )
       .unique();
     if (!existing) throw new Error("User not found");

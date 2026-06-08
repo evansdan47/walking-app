@@ -1073,18 +1073,6 @@ function ProfileSheetContent({
   useEffect(() => {
     setWeightDraft(preferences.bodyWeightKg !== null ? String(preferences.bodyWeightKg) : '');
   }, [preferences.bodyWeightKg]);
-  const upsertCurrentUser = useMutation(api.users.upsertCurrentUser);
-
-  useEffect(() => {
-    if (!user) return;
-    upsertCurrentUser({
-      ...(user.fullName ? { name: user.fullName } : {}),
-      ...(user.primaryEmailAddress?.emailAddress
-        ? { email: user.primaryEmailAddress.emailAddress }
-        : {}),
-    }).catch(() => {});
-  }, [user, upsertCurrentUser]);
-
   const displayName = user?.fullName ?? user?.firstName ?? 'Walker';
   const email = user?.primaryEmailAddress?.emailAddress ?? '';
   const appVersion = Constants.expoConfig?.version ?? '1.0.0';

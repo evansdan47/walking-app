@@ -1,6 +1,6 @@
 import { useAuth, useUser } from '@clerk/expo';
 import { Ionicons } from '@expo/vector-icons';
-import { useConvex, useMutation } from 'convex/react';
+import { useConvex } from 'convex/react';
 import Constants from 'expo-constants';
 import { Pedometer } from 'expo-sensors';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -274,7 +274,6 @@ export default function ProfileScreen() {
     setHcStatus(granted?.readSteps ? 'granted' : 'denied');
   }, []);
 
-  const upsertCurrentUser = useMutation(api.users.upsertCurrentUser);
   const convex = useConvex();
   const [syncing, setSyncing] = useState(false);
 
@@ -301,16 +300,6 @@ export default function ProfileScreen() {
       setSyncing(false);
     }
   }, [convex]);
-
-  useEffect(() => {
-    if (!user) return;
-    upsertCurrentUser({
-      ...(user.fullName ? { name: user.fullName } : {}),
-      ...(user.primaryEmailAddress?.emailAddress
-        ? { email: user.primaryEmailAddress.emailAddress }
-        : {}),
-    }).catch(() => {});
-  }, [user, upsertCurrentUser]);
 
   const handleSignOut = () => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [

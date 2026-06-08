@@ -31,11 +31,15 @@ import ReAnimated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { TagFilterModal } from '@/components/explore/tag-filter-modal';
 import { IconSymbol } from '@/components/ui/icon-symbol';
+import { api } from '@/convex/_generated/api';
+import type { Id } from '@/convex/_generated/dataModel';
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useExploreData } from '@/hooks/use-explore-data';
 import { useUserPreferences } from '@/hooks/use-user-preferences';
+import { useQuery } from 'convex/react';
 import {
     distanceToNearestRoutePointM,
     distanceToRouteStartM,
@@ -132,17 +136,23 @@ function fmtDate(ts: number): string {
 
 // ── Route list card ────────────────────────────────────────────────────────────
 
+type RouteTagEnrichment = {
+  topTags: Array<{ slug: string; label: string }>;
+  tagCount: number;
+};
+
 interface RouteListCardProps {
   route: PlannedRoute;
   onPress: () => void;
   isHighlighted: boolean;
   colors: (typeof Colors)['light'];
   userLocation: { latitude: number; longitude: number } | null;
+  tagEnrichment?: RouteTagEnrichment;
 }
 
 const HIGHLIGHT_COLOR = '#007AFF';
 
-function RouteListCard({ route, onPress, isHighlighted, colors, userLocation }: RouteListCardProps) {
+function RouteListCard({ route, onPress, isHighlighted, colors, userLocation, tagEnrichment }: RouteListCardProps) {
   const { preferences } = useUserPreferences();
   const preferMiles = preferences.preferMiles;
   const distKm = routeDistKm(route);
@@ -220,6 +230,25 @@ function RouteListCard({ route, onPress, isHighlighted, colors, userLocation }: 
           <View style={[styles.difficultyBadge, { backgroundColor: diff.color }]}>
             <Text style={styles.difficultyBadgeText}>{diff.label}</Text>
           </View>
+          {tagEnrichment && tagEnrichment.topTags.length > 0 && (
+            <View style={styles.listCardTags}>
+              {tagEnrichment.topTags.map((tag) => (
+                <View
+                  key={tag.slug}
+                  style={[styles.listCardTagChip, { backgroundColor: colors.backgroundMuted }]}
+                >
+                  <Text style={[styles.listCardTagText, { color: colors.textMuted }]} numberOfLines={1}>
+                    {tag.label}
+                  </Text>
+                </View>
+              ))}
+              {tagEnrichment.tagCount > tagEnrichment.topTags.length && (
+                <Text style={[styles.listCardTagMore, { color: colors.textMuted }]}>
+                  +{tagEnrichment.tagCount - tagEnrichment.topTags.length} more
+                </Text>
+              )}
+            </View>
+          )}
         </View>
       </View>
 
@@ -501,6 +530,33 @@ function EmptyState({ colors }: { colors: (typeof Colors)['light'] }) {
   );
 }
 
+function TagFilterEmptyState({
+  colors,
+  onClearTags,
+}: {
+  colors: (typeof Colors)['light'];
+  onClearTags: () => void;
+}) {
+  return (
+    <View style={styles.emptyState}>
+      <IconSymbol name="tag.fill" size={40} color={colors.textMuted} />
+      <Text style={[styles.emptyTitle, { color: colors.text }]}>
+        No matching routes
+      </Text>
+      <Text style={[styles.emptyBody, { color: colors.textMuted }]}>
+        No routes in this area match your selected tags. Try fewer tags or pan to another area.
+      </Text>
+      <TouchableOpacity
+        onPress={onClearTags}
+        style={[styles.clearTagsBtn, { borderColor: colors.border }]}
+        activeOpacity={0.75}
+      >
+        <Text style={[styles.clearTagsBtnText, { color: colors.text }]}>Clear tag filter</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 // ── ExploreSheetContent ───────────────────────────────────────────────────────
 
 export interface ExploreSheetContentProps {
@@ -628,6 +684,38 @@ export function ExploreSheetContent({
   // preventing map panning from triggering a list resync.
   const { routes, isSyncing } = useExploreData(effectiveBounds);
 
+  const [tagFilterSlugs, setTagFilterSlugs] = useState<string[]>([]);
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
+
+  const routeIds = useMemo(
+    () => routes.map((r) => r._id as Id<'plannedRoutes'>),
+    [routes],
+  );
+  const tagEnrichmentRows = useQuery(
+    api.tags.getExploreTagEnrichment,
+    routeIds.length > 0
+      ? {
+          plannedRouteIds: routeIds,
+          ...(tagFilterSlugs.length > 0 ? { filterTagSlugs: tagFilterSlugs } : {}),
+        }
+      : 'skip',
+  );
+  const tagEnrichmentByRoute = useMemo(() => {
+    const map = new Map<
+      string,
+      { score: number; passesFilter: boolean; topTags: RouteTagEnrichment['topTags']; tagCount: number }
+    >();
+    for (const row of tagEnrichmentRows ?? []) {
+      map.set(row.plannedRouteId, {
+        score: row.score,
+        passesFilter: row.passesFilter,
+        topTags: row.topTags,
+        tagCount: row.tagCount,
+      });
+    }
+    return map;
+  }, [tagEnrichmentRows]);
+
   // Safety-net: clear skeleton after 1500ms if SQLite update hasn't done it.
   useEffect(() => {
     if (restLoadingPendingId === null) {
@@ -657,11 +745,25 @@ export function ExploreSheetContent({
   // Full skeleton only on first open when cache is empty and sync is in flight.
   const isInitialLoad = isSyncing && routes.length === 0 && !highlightedRoute;
 
-  // Sort newest-first for consistent display order.
-  const displayRoutes: PlannedRoute[] = useMemo(
-    () => [...routes].sort((a, b) => b.createdAt - a.createdAt),
-    [routes],
-  );
+  // Sort newest-first; when tag filter is active, keep matches and sort by score.
+  const displayRoutes: PlannedRoute[] = useMemo(() => {
+    const sorted = [...routes].sort((a, b) => b.createdAt - a.createdAt);
+    if (tagFilterSlugs.length === 0) return sorted;
+    if (tagEnrichmentRows === undefined) return sorted;
+    const filtered = sorted.filter((r) => tagEnrichmentByRoute.get(r._id)?.passesFilter ?? false);
+    return [...filtered].sort((a, b) => {
+      const sa = tagEnrichmentByRoute.get(a._id)?.score ?? 0;
+      const sb = tagEnrichmentByRoute.get(b._id)?.score ?? 0;
+      return sb - sa;
+    });
+  }, [routes, tagFilterSlugs, tagEnrichmentRows, tagEnrichmentByRoute]);
+
+  const tagFilterActive = tagFilterSlugs.length > 0;
+  const noTagMatches =
+    tagFilterActive &&
+    routes.length > 0 &&
+    tagEnrichmentRows !== undefined &&
+    displayRoutes.length === 0;
 
   // Propagate resolved routes to parent so ExploreMapLayer can share the data
   // without running its own independent Convex subscription.
@@ -699,6 +801,8 @@ export function ExploreSheetContent({
     ? routeDistanceSubtitle
     : isGroupView
     ? `${groupedRoutes!.length} route${groupedRoutes!.length !== 1 ? 's' : ''} in group`
+    : tagFilterActive && displayRoutes.length > 0
+    ? `${displayRoutes.length} matching route${displayRoutes.length !== 1 ? 's' : ''}`
     : routes.length > 0
     ? `${routes.length} route${routes.length !== 1 ? 's' : ''} in view`
     : isSyncing
@@ -750,8 +854,35 @@ export function ExploreSheetContent({
           ) : null}
         </View>
 
-        <View style={styles.headerRight} />
+        {!selectedRoute && !isGroupView ? (
+          <TouchableOpacity
+            style={styles.headerRight}
+            onPress={() => setTagFilterOpen(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityLabel="Filter by tags"
+          >
+            <IconSymbol
+              name="line.3.horizontal.decrease.circle"
+              size={22}
+              color={tagFilterActive ? colors.primary : colors.text}
+            />
+            {tagFilterActive && (
+              <View style={[styles.filterBadge, { backgroundColor: colors.primary }]}>
+                <Text style={styles.filterBadgeText}>{tagFilterSlugs.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <View style={styles.headerRight} />
+        )}
       </BlurView>
+
+      <TagFilterModal
+        visible={tagFilterOpen}
+        selectedSlugs={tagFilterSlugs}
+        onApply={setTagFilterSlugs}
+        onClose={() => setTagFilterOpen(false)}
+      />
 
       {/* Scrollable content — height driven by animatedPosition so the ScrollView
           is always bounded to the visible sheet area regardless of snap position. */}
@@ -802,6 +933,8 @@ export function ExploreSheetContent({
             <View style={{ paddingTop: Spacing.sm }}>
               {[0, 1, 2, 3].map(i => <SkeletonCard key={i} colors={colors} />)}
             </View>
+          ) : noTagMatches ? (
+            <TagFilterEmptyState colors={colors} onClearTags={() => setTagFilterSlugs([])} />
           ) : (
             // List view — highlighted route is always pinned at the top.
             // While the viewport query re-runs (camera flew to the route),
@@ -825,6 +958,7 @@ export function ExploreSheetContent({
                       colors={colors}
                       isHighlighted={route._id === highlightedRoute?._id}
                       userLocation={userLocation}
+                      tagEnrichment={tagEnrichmentByRoute.get(route._id)}
                       onPress={() => {
                         if (directDetail) {
                           // Snapshot bounds before selection so map panning
@@ -902,6 +1036,33 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'flex-end',
   },
+  filterBadge: {
+    position: 'absolute',
+    top: 2,
+    right: -2,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  filterBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontFamily: Typography.fontBold,
+  },
+  clearTagsBtn: {
+    marginTop: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.sm,
+    borderRadius: Radius.md,
+    borderWidth: 1,
+  },
+  clearTagsBtnText: {
+    fontSize: Typography.sizes.sm,
+    fontFamily: Typography.fontMedium,
+  },
 
   // Scroll
   scrollContent: {
@@ -950,9 +1111,29 @@ const styles = StyleSheet.create({
     fontFamily: Typography.fontRegular,
   },
   listCardMeta: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  listCardTags: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: 4,
+  },
+  listCardTagChip: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: Radius.full,
+    maxWidth: 120,
+  },
+  listCardTagText: {
+    fontSize: 10,
+    fontFamily: Typography.fontMedium,
+  },
+  listCardTagMore: {
+    fontSize: 10,
+    fontFamily: Typography.fontRegular,
   },
   listCardMetaText: {
     fontSize: 11,

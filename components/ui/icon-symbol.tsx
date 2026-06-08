@@ -53,6 +53,10 @@ const MAPPING = {
   'gear': 'settings',
   'person.fill': 'person',
   'bookmark.fill': 'bookmark',
+  'tag.fill': 'label',
+  'line.3.horizontal.decrease.circle': 'filter-list',
+  'mappin': 'place',
+  'location': 'near-me',
 } as unknown as IconMapping;
 
 /**

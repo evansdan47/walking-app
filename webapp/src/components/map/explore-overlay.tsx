@@ -7,7 +7,14 @@ import type { GeoJSONSource } from 'mapbox-gl';
 import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Marker, Popup, Source, useMap } from 'react-map-gl/mapbox';
+import {
+  ExploreRouteWalkHistoryTable,
+  RouteWalkHistoryBanner,
+  RouteWalkPhotoGrid,
+  useRouteWalkHistory,
+} from '@/components/map/explore-route-walk-history';
 import { RouteTagDisplay } from '@/components/tags/route-tag-display';
+import { TagFilterModal } from '@/components/tags/tag-filter-modal';
 import { PanelPacePicker } from '@/components/panel-pace-picker';
 import { usePace } from '@/components/pace-context';
 import { ACTIVITY_PROFILES, type ActivityPace } from '@/lib/activity-pace';
@@ -291,34 +298,40 @@ interface FilterState {
   distKm: [number, number];   // high = Infinity → no upper limit
   elevM: [number, number];
   durMins: [number, number];
+  tagSlugs: string[];
 }
 
 const UNFILTERED: FilterState = {
   distKm: [0, Infinity],
   elevM: [0, Infinity],
   durMins: [0, Infinity],
+  tagSlugs: [],
 };
 
 function isFilterActive(f: FilterState): boolean {
   return f.distKm[0] > 0 || f.distKm[1] !== Infinity
     || f.elevM[0] > 0 || f.elevM[1] !== Infinity
-    || f.durMins[0] > 0 || f.durMins[1] !== Infinity;
+    || f.durMins[0] > 0 || f.durMins[1] !== Infinity
+    || f.tagSlugs.length > 0;
 }
 
 function FilterBar({
   open, onToggle,
   filter, setFilter,
   maxDist, maxElev, maxDur,
+  onOpenTagFilter,
 }: {
   open: boolean; onToggle: () => void;
   filter: FilterState; setFilter: (f: FilterState) => void;
   maxDist: number; maxElev: number; maxDur: number;
+  onOpenTagFilter: () => void;
 }) {
   const active = isFilterActive(filter);
   const activeCount = [
     filter.distKm[0] > 0 || filter.distKm[1] !== Infinity,
     filter.elevM[0] > 0 || filter.elevM[1] !== Infinity,
     filter.durMins[0] > 0 || filter.durMins[1] !== Infinity,
+    filter.tagSlugs.length > 0,
   ].filter(Boolean).length;
 
   // Map Infinity sentinel to slider max
@@ -391,6 +404,35 @@ function FilterBar({
             onLow={v => setFilter({ ...filter, durMins: [v, filter.durMins[1]] })}
             onHigh={v => setFilter({ ...filter, durMins: [filter.durMins[0], v >= maxDur ? Infinity : v] })}
           />
+
+          <div className="border-t border-gray-100 pt-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[10px] text-gray-400 uppercase tracking-wider font-semibold">Tags</p>
+              {filter.tagSlugs.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setFilter({ ...filter, tagSlugs: [] })}
+                  className="text-[11px] font-semibold text-brand hover:underline"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={onOpenTagFilter}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-lg border border-gray-200 hover:border-brand/40 hover:bg-brand/5 transition-colors text-left"
+            >
+              <span className="text-xs text-slate">
+                {filter.tagSlugs.length === 0
+                  ? 'Choose tags…'
+                  : `${filter.tagSlugs.length} tag${filter.tagSlugs.length === 1 ? '' : 's'} selected`}
+              </span>
+              <svg viewBox="0 0 24 24" className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M9 18l6-6-6-6" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -1332,6 +1374,7 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
   });
   const [liked, setLiked] = useState(false);
   const [descExpanded, setDescExpanded] = useState(false);
+  const walkHistory = useRouteWalkHistory(route._id);
 
   // ── Resize ──────────────────────────────────────────────────────────────
   const [width, onWidthChange] = usePanelWidth();
@@ -1463,6 +1506,9 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
               <span className="text-xs text-gray-400">{date}</span>
               <VisibilityBadge visibility={route.visibility} />
             </div>
+            {walkHistory && (
+              <RouteWalkHistoryBanner lastWalkedAt={walkHistory.lastWalkedAt} />
+            )}
           </div>
           <PanelPacePicker />
         </div>
@@ -1548,9 +1594,13 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
             className="px-4 py-4 border-b border-gray-100"
           />
 
-          {/* Photos */}
+          {/* Photos — from your walks when available, otherwise placeholder */}
           <div className="px-4 pt-4 pb-3 border-b border-gray-100">
-            <PhotoGrid />
+            {walkHistory ? (
+              <RouteWalkPhotoGrid photos={walkHistory.photos} />
+            ) : (
+              <PhotoGrid />
+            )}
           </div>
 
           {/* Description */}
@@ -1577,6 +1627,14 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
               onHoverIndex={onElevHoverIdx}
             />
           </div>
+
+          {walkHistory && (
+            <ExploreRouteWalkHistoryTable
+              plannedRouteId={route._id}
+              routeDistanceKm={dist}
+              routeElevationM={elev}
+            />
+          )}
 
           {/* Reviews */}
           <div className="px-4 pt-4 pb-2 border-b border-gray-100">
@@ -1627,9 +1685,24 @@ function SelectedRoutePanel({ route, onClose, onPreview, routeElevPoints, routeE
 
 // ── Bottom HUD ───────────────────────────────────────────────────────────────
 
-function MapHUD({ routeCount, viewingKm }: { routeCount: number | null; viewingKm: string | null }) {
+function MapHUD({
+  routeCount,
+  viewingKm,
+  filterActive,
+  noTagMatches,
+}: {
+  routeCount: number | null;
+  viewingKm: string | null;
+  filterActive: boolean;
+  noTagMatches: boolean;
+}) {
   return (
-    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex items-center gap-3">
+    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-10 flex flex-col items-center gap-2">
+      {noTagMatches && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium px-4 py-2 rounded-full shadow">
+          No routes match your tags — try fewer or different tags
+        </div>
+      )}
       <div className="bg-[#263238]/90 backdrop-blur-sm rounded-xl px-5 py-3 flex items-center gap-6 text-white shadow-lg">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-widest text-white/60">Viewing Range</p>
@@ -1637,7 +1710,9 @@ function MapHUD({ routeCount, viewingKm }: { routeCount: number | null; viewingK
         </div>
         <div className="w-px h-8 bg-white/20" />
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-widest text-white/60">Routes Found</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-white/60">
+            {filterActive ? 'Matching routes' : 'Routes Found'}
+          </p>
           <p className="text-xl font-bold leading-tight">{routeCount === null ? '...' : routeCount}</p>
         </div>
       </div>
@@ -1672,6 +1747,25 @@ export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onP
   // ── Filter state ─────────────────────────────────────────────────────────
   const [filter, setFilter] = useState<FilterState>(UNFILTERED);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [tagFilterOpen, setTagFilterOpen] = useState(false);
+
+  const routeIds = useMemo(() => (routes ?? []).map((r) => r._id), [routes]);
+  const tagEnrichment = useQuery(
+    api.tags.getExploreTagEnrichment,
+    routeIds.length > 0
+      ? {
+          plannedRouteIds: routeIds,
+          ...(filter.tagSlugs.length > 0 ? { filterTagSlugs: filter.tagSlugs } : {}),
+        }
+      : 'skip',
+  );
+  const tagEnrichmentMap = useMemo(() => {
+    const map = new Map<string, { score: number; passesFilter: boolean }>();
+    for (const row of tagEnrichment ?? []) {
+      map.set(row.plannedRouteId, { score: row.score, passesFilter: row.passesFilter });
+    }
+    return map;
+  }, [tagEnrichment]);
 
   // Derive nice-rounded max values from visible routes
   const maxDist = useMemo(() => {
@@ -1687,12 +1781,13 @@ export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onP
     return niceDurMax(Math.max(...routes.map(r => routeDurMins(r.stats?.distanceKm ?? 0, r.stats?.elevationGainM ?? 0, activity)), 15));
   }, [routes, activity]);
 
-  // Apply filter to routes
+  // Apply filter to routes (stats + tags); sort by tag match score when tagging
   const filteredRoutes = useMemo(() => {
     if (!routes) return undefined;
     const active = isFilterActive(filter);
     if (!active) return routes;
-    return routes.filter(r => {
+
+    const statFiltered = routes.filter((r) => {
       const dist = r.stats?.distanceKm ?? 0;
       const elev = r.stats?.elevationGainM ?? 0;
       const dur = routeDurMins(dist, elev, activity);
@@ -1704,12 +1799,26 @@ export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onP
       if (dur < tLow || (tHigh !== Infinity && dur > tHigh)) return false;
       return true;
     });
-  }, [routes, filter, activity]);
+
+    if (filter.tagSlugs.length === 0) return statFiltered;
+    if (tagEnrichment === undefined) return statFiltered;
+
+    const tagFiltered = statFiltered.filter((r) => {
+      const row = tagEnrichmentMap.get(r._id);
+      return row?.passesFilter ?? false;
+    });
+
+    return [...tagFiltered].sort((a, b) => {
+      const sa = tagEnrichmentMap.get(a._id)?.score ?? 0;
+      const sb = tagEnrichmentMap.get(b._id)?.score ?? 0;
+      return sb - sa;
+    });
+  }, [routes, filter, activity, tagEnrichment, tagEnrichmentMap]);
 
   // Notify parent of active filtered IDs (for pin filtering in ExploreMapLayers)
   const filteredIds = useMemo(() => {
     if (!isFilterActive(filter) || !filteredRoutes) return null;
-    return new Set(filteredRoutes.map(r => r._id));
+    return new Set(filteredRoutes.map((r) => r._id));
   }, [filteredRoutes, filter]);
 
   useEffect(() => {
@@ -1717,10 +1826,21 @@ export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onP
   }, [filteredIds, onFilteredIdsChange]);
 
   const displayCount = filteredRoutes?.length ?? routes?.length ?? null;
+  const filterActive = isFilterActive(filter);
+  const noTagMatches =
+    filter.tagSlugs.length > 0 &&
+    routes !== undefined &&
+    tagEnrichment !== undefined &&
+    (filteredRoutes?.length ?? 0) === 0;
 
   return (
     <>
-      <MapHUD routeCount={displayCount} viewingKm={viewingKm} />
+      <MapHUD
+        routeCount={displayCount}
+        viewingKm={viewingKm}
+        filterActive={filterActive}
+        noTagMatches={noTagMatches}
+      />
       <FilterBar
         open={filterOpen}
         onToggle={() => setFilterOpen(v => !v)}
@@ -1729,6 +1849,13 @@ export function ExploreOverlay({ viewBounds, selectedRoute, onDeselectRoute, onP
         maxDist={maxDist}
         maxElev={maxElev}
         maxDur={maxDur}
+        onOpenTagFilter={() => setTagFilterOpen(true)}
+      />
+      <TagFilterModal
+        open={tagFilterOpen}
+        selectedSlugs={filter.tagSlugs}
+        onApply={(tagSlugs) => setFilter((f) => ({ ...f, tagSlugs }))}
+        onClose={() => setTagFilterOpen(false)}
       />
       {selectedRoute && (
         <SelectedRoutePanel

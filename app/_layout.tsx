@@ -48,6 +48,7 @@ import '@/lib/location/background-task';
 // The token is exposed to the JS bundle via the EXPO_PUBLIC_ prefix.
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
+import { MobileBuildGate } from '@/components/app/mobile-build-gate';
 import { QueuedWalkProvider } from '@/contexts/queued-walk-context';
 import { ReviewRouteProvider } from '@/contexts/review-route-context';
 import { WalkSessionProvider } from '@/contexts/walk-session-context';
@@ -106,6 +107,7 @@ export default function RootLayout() {
         tokenCache={tokenCache}
       >
         <ConvexProviderWithAuth client={convex} useAuth={useConvexAuth}>
+          <MobileBuildGate>
           <WalkSessionProvider>
             <QueuedWalkProvider>
               <ReviewRouteProvider>
@@ -142,6 +144,7 @@ export default function RootLayout() {
               </ReviewRouteProvider>
             </QueuedWalkProvider>
           </WalkSessionProvider>
+          </MobileBuildGate>
         </ConvexProviderWithAuth>
       </ClerkProvider>
       {showSplash && <SplashOverlay onDone={handleSplashDone} />}

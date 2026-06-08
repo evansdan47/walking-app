@@ -29,6 +29,17 @@ export default defineSchema({
     /** Sticky A/B/C assignment for walk tagging UI experiments. */
     taggingExperimentVariant: v.optional(taggingExperimentVariantValidator),
     taggingExperimentAssignedAt: v.optional(v.number()),
+    /** Last successful session sync from the web app (ms epoch). */
+    lastLoginAtWeb: v.optional(v.number()),
+    /** Last successful session sync from the mobile app (ms epoch). */
+    lastLoginAtMobile: v.optional(v.number()),
+    /** Native build number from the most recent mobile session sync. */
+    lastMobileBuild: v.optional(v.number()),
+    /** Semver from the most recent mobile session sync (display only). */
+    lastMobileVersion: v.optional(v.string()),
+    lastMobilePlatform: v.optional(v.union(v.literal("ios"), v.literal("android"))),
+    /** Web app version string from the most recent web session sync. */
+    lastWebAppVersion: v.optional(v.string()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   /**
@@ -568,6 +579,23 @@ export default defineSchema({
   })
     .index("by_plannedRouteId", ["plannedRouteId"])
     .index("by_plannedRouteId_and_tagId", ["plannedRouteId", "tagId"]),
+
+  // ------------------------------------------------------------------
+  // Mobile release policy — minimum / latest native build per platform
+  // ------------------------------------------------------------------
+
+  mobileReleasePolicies: defineTable({
+    platform: v.union(v.literal("ios"), v.literal("android")),
+    /** Builds below this are blocked from using the app. 0 = no minimum enforced. */
+    minimumBuild: v.number(),
+    /** Builds below this see an optional update prompt. 0 = no nudge. */
+    latestBuild: v.number(),
+    storeUrl: v.string(),
+    optionalUpdateMessage: v.optional(v.string()),
+    requiredUpdateMessage: v.optional(v.string()),
+    updatedAt: v.number(),
+    updatedByUserId: v.optional(v.id("users")),
+  }).index("by_platform", ["platform"]),
 
   // ------------------------------------------------------------------
   // Feature experiments — reusable A/B/C (or arbitrary variant) framework

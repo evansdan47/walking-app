@@ -10,6 +10,7 @@ import { CollapsibleSidePanel } from '@/components/ui/collapsible-side-panel';
 import { api } from '@convex/_generated/api';
 import type { Doc, Id } from '@convex/_generated/dataModel';
 import { useMutation, useQuery } from 'convex/react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExploreElevationProfile } from './explore-overlay';
 import type { Point } from './planner-overlay';
@@ -25,6 +26,8 @@ interface TrackPoint {
 }
 
 interface ActivityOverlayProps {
+  /** Open activity detail for this walk (from URL ?walkId=). */
+  initialWalkId?: Id<'walks'> | null;
   /** Called whenever the displayed GPS track changes. Empty array = clear. */
   onTrackChange: (points: Point[]) => void;
   /** Called to fly-fit the map to a track's bounding box. */
@@ -531,6 +534,7 @@ function StatCell({ label, value }: { label: string; value: string }) {
 // ── Main overlay ───────────────────────────────────────────────────────────────
 
 export function ActivityOverlay({
+  initialWalkId = null,
   onTrackChange,
   onFitBounds,
   onElevHoverIdx,
@@ -538,11 +542,19 @@ export function ActivityOverlay({
   photoHoverId,
   onPhotoHover,
 }: ActivityOverlayProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [selectedWalkId, setSelectedWalkId] = useState<Id<'walks'> | null>(null);
   const [hoveredWalkId, setHoveredWalkId] = useState<Id<'walks'> | null>(null);
   const [sidebarWidth, setSidebarWidth] = usePanelWidth();
 
   const walks = useQuery(api.walks.listForCurrentUser);
+
+  useEffect(() => {
+    if (!initialWalkId || walks === undefined) return;
+    const found = walks.some((w) => w._id === initialWalkId);
+    if (found) setSelectedWalkId(initialWalkId);
+  }, [initialWalkId, walks]);
   const walkIds = useMemo(() => (walks ?? []).map((w) => w._id), [walks]);
   const cardEnrichmentRows = useQuery(
     api.walks.getCardEnrichment,
@@ -645,7 +657,12 @@ export function ActivityOverlay({
     onPhotosChange([]);
     onPhotoHover(null);
     prevBoundsRef.current = '';
-  }, [onElevHoverIdx, onTrackChange, onPhotosChange, onPhotoHover]);
+    if (searchParams.get('walkId')) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('walkId');
+      router.replace(`/map?${params.toString()}`);
+    }
+  }, [onElevHoverIdx, onTrackChange, onPhotosChange, onPhotoHover, router, searchParams]);
 
   const handleWidthChange = setSidebarWidth;
 
