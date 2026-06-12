@@ -236,3 +236,123 @@ input, textarea, [contenteditable] {
     transform: scaleX(1);
   }
 }
+
+/* Badge — diagonal shine for newly earned badges */
+@keyframes badge-shine-sweep {
+  0%,
+  12% {
+    transform: translate(-72%, -72%);
+    opacity: 0;
+  }
+  24% {
+    opacity: 1;
+  }
+  76% {
+    opacity: 1;
+  }
+  88%,
+  100% {
+    transform: translate(72%, 72%);
+    opacity: 0;
+  }
+}
+
+.badge-shine {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.badge-shine-band {
+  position: absolute;
+  top: -60%;
+  left: -60%;
+  width: 220%;
+  height: 220%;
+  animation: badge-shine-sweep 3.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.badge-shine-band--soft_sweep {
+  background: linear-gradient(
+    125deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.1) 44%,
+    rgba(255, 255, 255, 0.38) 50%,
+    rgba(255, 255, 255, 0.1) 56%,
+    transparent 60%
+  );
+}
+
+.badge-shine-band--sharp_sweep {
+  background: linear-gradient(
+    125deg,
+    transparent 47%,
+    rgba(255, 255, 255, 0.2) 49%,
+    rgba(255, 255, 255, 0.85) 50%,
+    rgba(255, 255, 255, 0.2) 51%,
+    transparent 53%
+  );
+  animation-duration: 2.6s;
+}
+
+.badge-shine-band--glossy_sweep {
+  background: linear-gradient(
+    125deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.08) 38%,
+    rgba(255, 255, 255, 0.28) 50%,
+    rgba(255, 255, 255, 0.08) 62%,
+    transparent 70%
+  );
+  animation-duration: 3.6s;
+}
+
+.badge-shine-band--multi_bands {
+  background: linear-gradient(
+    125deg,
+    transparent 34%,
+    rgba(255, 255, 255, 0.06) 37%,
+    rgba(255, 255, 255, 0.22) 40%,
+    rgba(255, 255, 255, 0.38) 42.5%,
+    rgba(255, 255, 255, 0.22) 45%,
+    rgba(255, 255, 255, 0.06) 48%,
+    transparent 51%,
+    transparent 52%,
+    rgba(255, 255, 255, 0.05) 54%,
+    rgba(255, 255, 255, 0.18) 57%,
+    rgba(255, 255, 255, 0.32) 59.5%,
+    rgba(255, 255, 255, 0.18) 62%,
+    rgba(255, 255, 255, 0.05) 65%,
+    transparent 68%,
+    transparent 69%,
+    rgba(255, 255, 255, 0.07) 71%,
+    rgba(255, 255, 255, 0.24) 74%,
+    rgba(255, 255, 255, 0.42) 76.5%,
+    rgba(255, 255, 255, 0.24) 79%,
+    rgba(255, 255, 255, 0.07) 82%,
+    transparent 85%
+  );
+  filter: blur(0.6px);
+  animation-duration: 2.8s;
+}
+
+.badge-shine-band--bright_flash {
+  background: linear-gradient(
+    125deg,
+    transparent 34%,
+    rgba(255, 255, 255, 0.35) 42%,
+    rgba(255, 255, 255, 0.95) 50%,
+    rgba(255, 255, 255, 0.35) 58%,
+    transparent 66%
+  );
+  animation-duration: 2.4s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge-shine-band {
+    animation: none;
+    opacity: 0;
+  }
+}

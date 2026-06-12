@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
+import { evaluateBadgesForUser } from "./badgeEngine/evaluate";
 import type { MobileBuildCheckResult } from "./appReleaseCore";
 import {
   buildLoginPatch,
@@ -48,6 +49,7 @@ async function syncCurrentUserHandler(
   const loginPatch = buildLoginPatch(args, now);
   const resolvedName = args.name ?? identity.name;
   const resolvedEmail = args.email ?? identity.email;
+  const hasAvatar = Boolean(identity.pictureUrl);
 
   const existing = await ctx.db
     .query("users")
@@ -59,6 +61,7 @@ async function syncCurrentUserHandler(
   let userId: Id<"users">;
 
   if (existing) {
+    const avatarChanged = existing.hasAvatar !== hasAvatar;
     await ctx.db.patch(existing._id, {
       ...(resolvedName !== undefined ? { name: resolvedName } : {}),
       ...(resolvedEmail !== undefined ? { email: resolvedEmail } : {}),
@@ -66,9 +69,18 @@ async function syncCurrentUserHandler(
       ...(!existing.subscription ? { subscription: DEFAULT_SUBSCRIPTION } : {}),
       ...(!existing.preferences ? { preferences: DEFAULT_PREFERENCES } : {}),
       ...(existing.createdAt === undefined ? { createdAt: now } : {}),
+      hasAvatar,
       updatedAt: now,
     });
     userId = existing._id;
+
+    if (avatarChanged && hasAvatar) {
+      await evaluateBadgesForUser(ctx, {
+        userId,
+        eventType: "profile_updated",
+        hints: { hasAvatar: true },
+      });
+    }
   } else {
     userId = await ctx.db.insert("users", {
       tokenIdentifier: identity.tokenIdentifier,
@@ -77,9 +89,18 @@ async function syncCurrentUserHandler(
       ...loginPatch,
       subscription: DEFAULT_SUBSCRIPTION,
       preferences: DEFAULT_PREFERENCES,
+      hasAvatar,
       createdAt: now,
       updatedAt: now,
     });
+
+    if (hasAvatar) {
+      await evaluateBadgesForUser(ctx, {
+        userId,
+        eventType: "profile_updated",
+        hints: { hasAvatar: true },
+      });
+    }
   }
 
   let mobileUpdate: MobileBuildCheckResult | null = null;
@@ -291,6 +312,11 @@ export const updatePreferences = mutation({
       updatedAt: now,
     });
 
+    await evaluateBadgesForUser(ctx, {
+      userId: existing._id,
+      eventType: "profile_updated",
+    });
+
     return merged;
   },
 });
@@ -332,6 +358,39 @@ export const updateProfile = mutation({
       ...(args.weightKg !== undefined ? { weightKg: args.weightKg } : {}),
       ...(preferences !== undefined ? { preferences } : {}),
       updatedAt: now,
+    });
+  },
+});
+
+/**
+ * Records avatar state after a Clerk profile-image update and evaluates profile badges.
+ * Call from the client after `user.setProfileImage` succeeds — the Convex JWT may lag
+ * until the next session refresh, so we pass the known state explicitly.
+ */
+export const recordAvatarUpdated = mutation({
+  args: { hasAvatar: v.boolean() },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_tokenIdentifier", (q) =>
+        q.eq("tokenIdentifier", identity.tokenIdentifier),
+      )
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const now = Date.now();
+    await ctx.db.patch(user._id, {
+      hasAvatar: args.hasAvatar,
+      updatedAt: now,
+    });
+
+    return await evaluateBadgesForUser(ctx, {
+      userId: user._id,
+      eventType: "profile_updated",
+      hints: { hasAvatar: args.hasAvatar },
     });
   },
 });

@@ -52,6 +52,12 @@ const BADGE: Record<BadgeVariant, string> = {
 
 const UPDATES: { date: string; badge: BadgeVariant; title: string; body: string }[] = [
   {
+    date:  '9 June 2026',
+    badge: 'new',
+    title: 'Walking badges',
+    body:  'Open your avatar and choose Badges to see your collection\u2014achievements for distance, elevation, consistency, exploration, route planning, and more. They unlock as you walk and use Rambleio; in-progress badges fill from the bottom so you can spot your next milestone at a glance. New unlocks pulse in the gallery, and opening one fires a little confetti. Walked before badges went live? Tap Recalculate my badges on the badges page to catch up.',
+  },
+  {
     date:  '8 June 2026',
     badge: 'new',
     title: 'Walking goals in your account menu',

@@ -9,6 +9,8 @@ import {
 import { AccountNavIcon } from '@/components/account/account-nav-icon';
 import { SubscriptionNavBadge } from '@/components/account/subscription-panel';
 import { WEB_APP_VERSION } from '@/lib/app-version';
+import { api } from '@convex/_generated/api';
+import { useQuery } from 'convex/react';
 
 type AccountMenuSidebarProps = {
   view: AccountMenuView;
@@ -47,6 +49,8 @@ function NavButton({
 }
 
 export function AccountMenuSidebar({ view, onSelectView, onSignOut }: AccountMenuSidebarProps) {
+  const account = useQuery(api.users.getAccountSummary);
+
   return (
     <aside className="w-44 shrink-0 flex flex-col border-r border-gray-200 bg-gray-50/80 min-h-0">
       <nav className="flex flex-col gap-0.5 px-2 py-3">
@@ -80,6 +84,20 @@ export function AccountMenuSidebar({ view, onSelectView, onSignOut }: AccountMen
             </svg>
           </a>
         ))}
+        {account?.isAdmin && (
+          <a
+            href="/admin"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 rounded-lg transition-colors"
+          >
+            <AccountNavIcon icon="admin" size="sm" />
+            <span className="flex-1">Admin</span>
+            <svg viewBox="0 0 24 24" className="w-3 h-3 text-gray-400 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+              <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" />
+            </svg>
+          </a>
+        )}
       </nav>
 
       <div className="flex-1 min-h-2" />

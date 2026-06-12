@@ -1,8 +1,8 @@
 'use client';
 
-import { MOCK_BADGES } from '@/components/account/account-mock-data';
 import type { AccountMenuView } from '@/components/account/account-menu-views';
 import { BetaBadge } from '@/components/account/beta-badge';
+import { BadgeGrid, BadgeGridCell } from '@/components/badges/badge-grid';
 import { GoalProgressBar } from '@/components/account/goal-progress-bar';
 import { GOAL_PROGRESS_COLORS } from '@/lib/goal-format';
 import { UserAvatar, useUserDisplay } from '@/components/account/user-avatar';
@@ -37,6 +37,7 @@ export function AccountMenuOverview({ onNavigate }: AccountMenuOverviewProps) {
   const { distanceUnit, elevationUnit } = useUserPreferences();
   const stats = useQuery(api.users.getLifetimeStats);
   const recentGoals = useQuery(api.userGoals.listRecentForOverview, { limit: 3 });
+  const recentBadges = useQuery(api.badges.listRecentUnlocked, { limit: 5 });
 
   const progressStats =
     stats === undefined
@@ -173,20 +174,42 @@ export function AccountMenuOverview({ onNavigate }: AccountMenuOverviewProps) {
             View all badges
           </button>
         </div>
-        <p className="text-[10px] text-gray-400 mb-2">Coming in a future update.</p>
-        <div className="flex flex-wrap gap-2">
-          {MOCK_BADGES.map((badge) => (
-            <div key={badge.label} className="flex flex-col items-center gap-1 w-14">
-              <div
-                className={`w-11 h-12 flex items-center justify-center text-[8px] font-bold text-center px-0.5 ${badge.color}`}
-                style={{ clipPath: 'polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%)' }}
-              >
-                {badge.label.split(' ')[0]}
+        {recentBadges === undefined ? (
+          <div className="grid grid-cols-5 gap-x-1 gap-y-3 animate-pulse">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="flex flex-col items-center gap-2">
+                <div className="h-14 w-full rounded bg-gray-100" />
+                <div className="h-4 w-3/4 rounded bg-gray-100" />
               </div>
-              <span className="text-[9px] text-gray-600 text-center leading-tight">{badge.label}</span>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : recentBadges.length === 0 ? (
+          <p className="text-[10px] text-gray-400">
+            No badges yet.{' '}
+            <button
+              type="button"
+              onClick={() => onNavigate('badges')}
+              className="text-brand font-medium hover:underline"
+            >
+              View catalogue
+            </button>
+          </p>
+        ) : (
+          <BadgeGrid ariaLabel="Recent badges">
+            {recentBadges.map((badge) => (
+              <BadgeGridCell
+                key={badge.key}
+                name={badge.name}
+                icon={badge.icon}
+                categoryColor={badge.categoryColor}
+                tier={badge.tier}
+                status="earned"
+                isNew={badge.isNew}
+                onClick={() => onNavigate('badges')}
+              />
+            ))}
+          </BadgeGrid>
+        )}
       </section>
     </div>
   );

@@ -9,10 +9,23 @@
  */
 
 import type * as account from "../account.js";
+import type * as admin from "../admin.js";
 import type * as appRelease from "../appRelease.js";
 import type * as appReleaseCore from "../appReleaseCore.js";
 import type * as authHelpers from "../authHelpers.js";
+import type * as badgeAdmin from "../badgeAdmin.js";
+import type * as badgeCategoriesSeed from "../badgeCategoriesSeed.js";
 import type * as badgeDefinitionsSeed from "../badgeDefinitionsSeed.js";
+import type * as badgeEngine_contextHelpers from "../badgeEngine/contextHelpers.js";
+import type * as badgeEngine_evaluate from "../badgeEngine/evaluate.js";
+import type * as badgeEngine_progressChains from "../badgeEngine/progressChains.js";
+import type * as badgeEngine_resolveDefinition from "../badgeEngine/resolveDefinition.js";
+import type * as badgeEngine_ruleEvaluators from "../badgeEngine/ruleEvaluators.js";
+import type * as badgeEngine_types from "../badgeEngine/types.js";
+import type * as badgeEngine_userContext from "../badgeEngine/userContext.js";
+import type * as badgeRuleValidators from "../badgeRuleValidators.js";
+import type * as badgeUiSettings from "../badgeUiSettings.js";
+import type * as badges from "../badges.js";
 import type * as device_logs from "../device_logs.js";
 import type * as experimentCore from "../experimentCore.js";
 import type * as experimentDefinitions from "../experimentDefinitions.js";
@@ -20,6 +33,7 @@ import type * as experimentService from "../experimentService.js";
 import type * as experimentValidators from "../experimentValidators.js";
 import type * as experiments from "../experiments.js";
 import type * as explore_routes from "../explore_routes.js";
+import type * as followSessions from "../followSessions.js";
 import type * as goalCatalog from "../goalCatalog.js";
 import type * as places from "../places.js";
 import type * as planned_routes from "../planned_routes.js";
@@ -48,10 +62,23 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   account: typeof account;
+  admin: typeof admin;
   appRelease: typeof appRelease;
   appReleaseCore: typeof appReleaseCore;
   authHelpers: typeof authHelpers;
+  badgeAdmin: typeof badgeAdmin;
+  badgeCategoriesSeed: typeof badgeCategoriesSeed;
   badgeDefinitionsSeed: typeof badgeDefinitionsSeed;
+  "badgeEngine/contextHelpers": typeof badgeEngine_contextHelpers;
+  "badgeEngine/evaluate": typeof badgeEngine_evaluate;
+  "badgeEngine/progressChains": typeof badgeEngine_progressChains;
+  "badgeEngine/resolveDefinition": typeof badgeEngine_resolveDefinition;
+  "badgeEngine/ruleEvaluators": typeof badgeEngine_ruleEvaluators;
+  "badgeEngine/types": typeof badgeEngine_types;
+  "badgeEngine/userContext": typeof badgeEngine_userContext;
+  badgeRuleValidators: typeof badgeRuleValidators;
+  badgeUiSettings: typeof badgeUiSettings;
+  badges: typeof badges;
   device_logs: typeof device_logs;
   experimentCore: typeof experimentCore;
   experimentDefinitions: typeof experimentDefinitions;
@@ -59,6 +86,7 @@ declare const fullApi: ApiFromModules<{
   experimentValidators: typeof experimentValidators;
   experiments: typeof experiments;
   explore_routes: typeof explore_routes;
+  followSessions: typeof followSessions;
   goalCatalog: typeof goalCatalog;
   places: typeof places;
   planned_routes: typeof planned_routes;

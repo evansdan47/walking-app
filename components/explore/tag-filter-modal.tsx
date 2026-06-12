@@ -1,6 +1,6 @@
 import { api } from '@/convex/_generated/api';
 import type { Doc, Id } from '@/convex/_generated/dataModel';
-import { useMutation, useQuery } from 'convex/react';
+import { useMutation } from 'convex/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal,
@@ -13,6 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
+import { useAppQuery } from '@/hooks/use-app-query';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { groupTagsByCategory } from '@/lib/tag-categories';
 
@@ -37,7 +38,7 @@ export function TagFilterModal({ visible, selectedSlugs, onApply, onClose }: Tag
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const insets = useSafeAreaInsets();
-  const allTags = useQuery(api.tags.listActiveTags, visible ? {} : 'skip');
+  const allTags = useAppQuery(api.tags.listActiveTags, visible ? {} : 'skip');
   const bootstrapTags = useMutation(api.tags.bootstrapTagDefinitionsIfEmpty);
   const [selectedIds, setSelectedIds] = useState<Set<Id<'tagDefinitions'>>>(new Set());
   const bootstrapAttempted = useRef(false);

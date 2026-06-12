@@ -1,6 +1,6 @@
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
-import { useConvex, useMutation, useQuery } from 'convex/react';
+import { useConvex, useMutation } from 'convex/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Colors, Spacing, Typography } from '@/constants/theme';
+import { useAppQuery } from '@/hooks/use-app-query';
 import { useWalkTaggingExperiment, EXPERIMENT_EVENTS } from '@/hooks/use-experiment';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { ensureWalkOnConvex } from '@/lib/sync/ensure-walk-on-convex';
@@ -47,12 +48,12 @@ export function WalkTaggingSheet({
   const [prepareError, setPrepareError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
 
-  const allTags = useQuery(api.tags.listActiveTags, visible ? {} : 'skip');
-  const suggestions = useQuery(
+  const allTags = useAppQuery(api.tags.listActiveTags, visible ? {} : 'skip');
+  const suggestions = useAppQuery(
     api.tags.suggestForWalk,
     convexWalkId ? { walkId: convexWalkId } : 'skip',
   );
-  const taggingStatus = useQuery(
+  const taggingStatus = useAppQuery(
     api.walks.getForTagging,
     convexWalkId ? { walkId: convexWalkId } : 'skip',
   );
@@ -169,6 +170,11 @@ export function WalkTaggingSheet({
 
   if (!visible || !experiment.enabled) return null;
 
+  const taggingAlreadyDone =
+    Boolean(taggingStatus?.taggingCompletedAt) || Boolean(taggingStatus?.taggingSkipped);
+  const taggingStatusLoaded = convexWalkId !== null && taggingStatus !== undefined;
+  const canShowPrompt = taggingStatusLoaded && !taggingAlreadyDone;
+
   const showSkip = experiment.config?.showSkip ?? true;
   const maxQuestions = experiment.config?.maxQuestions ?? 7;
   const ready =
@@ -179,8 +185,11 @@ export function WalkTaggingSheet({
     allTags !== undefined &&
     suggestions !== undefined;
 
+  // Avoid flashing the dimmed backdrop while syncing the walk or loading tagging state.
+  if (!canShowPrompt) return null;
+
   return (
-    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+    <Modal visible animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <View
           style={[

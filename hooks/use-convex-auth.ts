@@ -18,10 +18,17 @@ export function useConvexAuth() {
     }: {
       forceRefreshToken: boolean;
     }) => {
-      return (
-        (await getToken({ template: "convex", skipCache: forceRefreshToken })) ??
-        null
-      );
+      const fresh = await getToken({
+        template: "convex",
+        skipCache: forceRefreshToken,
+      });
+      if (fresh) return fresh;
+      // During forced refresh the cache may be briefly empty — keep the session
+      // alive with the last good token instead of dropping all subscriptions.
+      if (forceRefreshToken) {
+        return (await getToken({ template: "convex", skipCache: false })) ?? null;
+      }
+      return null;
     },
   };
 }

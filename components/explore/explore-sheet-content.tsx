@@ -32,6 +32,7 @@ import ReAnimated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { TagFilterModal } from '@/components/explore/tag-filter-modal';
+import { BOTTOM_SHEET_GRABBER_HEIGHT } from '@/components/ui/bottom-sheet-grabber';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { api } from '@/convex/_generated/api';
 import type { Id } from '@/convex/_generated/dataModel';
@@ -39,7 +40,7 @@ import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useExploreData } from '@/hooks/use-explore-data';
 import { useUserPreferences } from '@/hooks/use-user-preferences';
-import { useQuery } from 'convex/react';
+import { useAppQuery } from '@/hooks/use-app-query';
 import {
     distanceToNearestRoutePointM,
     distanceToRouteStartM,
@@ -667,8 +668,10 @@ export function ExploreSheetContent({
   }
   const scrollAreaStyle = useAnimatedStyle(() => {
     // animatedPosition: Y position of sheet top from screen top (0 = full screen, screenHeight = closed)
-    const HANDLE_HEIGHT = 24; // @gorhom default handle container height
-    const scrollH = Math.max(0, screenHeight - animatedPosition.value - HANDLE_HEIGHT - headerHeightSV.value);
+    const scrollH = Math.max(
+      0,
+      screenHeight - animatedPosition.value - BOTTOM_SHEET_GRABBER_HEIGHT - headerHeightSV.value,
+    );
     return { height: scrollH };
   });
 
@@ -691,7 +694,7 @@ export function ExploreSheetContent({
     () => routes.map((r) => r._id as Id<'plannedRoutes'>),
     [routes],
   );
-  const tagEnrichmentRows = useQuery(
+  const tagEnrichmentRows = useAppQuery(
     api.tags.getExploreTagEnrichment,
     routeIds.length > 0
       ? {

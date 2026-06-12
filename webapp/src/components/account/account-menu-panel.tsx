@@ -3,6 +3,7 @@
 import { AccountMenuOverview } from '@/components/account/account-menu-overview';
 import { AccountMenuPreferences } from '@/components/account/account-menu-preferences';
 import { AccountMenuProfile } from '@/components/account/account-menu-profile';
+import { AccountMenuBadges } from '@/components/account/account-menu-badges';
 import { AccountMenuGoals } from '@/components/account/account-menu-goals';
 import { AccountMenuSubscription } from '@/components/account/account-menu-subscription';
 import { AccountMenuSection } from '@/components/account/account-menu-section';
@@ -99,6 +100,8 @@ export function AccountMenuPanel({ open, onClose, anchorRef }: AccountMenuPanelP
               <AccountMenuSubscription />
             ) : view === 'goals' ? (
               <AccountMenuGoals />
+            ) : view === 'badges' ? (
+              <AccountMenuBadges />
             ) : (
               <AccountMenuSection title={copy.title} description={copy.description} />
             )}

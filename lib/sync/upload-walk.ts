@@ -8,6 +8,7 @@ import { getPointsForWalk, getUnsyncedPointsForWalk, markPointsSynced } from '..
 import { getPhotosForWalk, updatePhotoAfterSync, updatePhotoStatus } from '../db/walk-photos';
 import type { WalkStats } from '../db/walks';
 import { getWalk, updateWalkConvexId } from '../db/walks';
+import { emitBadgeUnlocks } from '@/lib/badges/badge-unlock-events';
 import { appLog } from '../diagnostics/logger';
 import { SYNC_BATCH_SIZE } from './sync-config';
 
@@ -238,6 +239,15 @@ export async function uploadWalk(
   // Phase 4 complete: walk core data fully synced regardless of photo outcome.
   updateCoreSyncStatus(opts.jobId, 'synced');
   updateJobPhase(opts.jobId, 4);
+
+  if (walk.status === 'completed') {
+    const badgeResult = await convex.mutation(api.walks.finalizeSync, {
+      walkId: convexWalkId as any,
+    });
+    if (badgeResult?.newlyUnlocked?.length) {
+      emitBadgeUnlocks(badgeResult.newlyUnlocked);
+    }
+  }
 
   return convexWalkId;
 }

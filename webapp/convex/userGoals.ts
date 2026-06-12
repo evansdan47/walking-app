@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import type { Doc, Id } from './_generated/dataModel';
 import { mutation, query, type MutationCtx, type QueryCtx } from './_generated/server';
+import { evaluateBadgesForUser } from './badgeEngine/evaluate';
 import {
   getGoalCategory,
   GOAL_CATEGORIES,
@@ -226,7 +227,7 @@ export const create = mutation({
       challengeLabel,
     });
 
-    return await ctx.db.insert('userGoals', {
+    const goalId = await ctx.db.insert('userGoals', {
       userId: user._id,
       goalType: categoryDef.goalType,
       category: args.category,
@@ -244,6 +245,14 @@ export const create = mutation({
       updatedAt: now,
       progressValue: 0,
     });
+
+    await evaluateBadgesForUser(ctx, {
+      userId: user._id,
+      eventType: 'goal_created',
+      sourceId: goalId,
+    });
+
+    return goalId;
   },
 });
 

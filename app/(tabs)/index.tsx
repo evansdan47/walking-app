@@ -7,7 +7,15 @@ import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -30,6 +38,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { OverviewDashboard } from '@/components/account/overview-dashboard';
 import { DebugStatsPanel } from '@/components/debug/debug-stats-panel';
 import { ExploreMapLayer, type ExploreViewBounds, type PlannedRoute } from '@/components/explore/explore-map-layer';
 import { ExploreSheetContent } from '@/components/explore/explore-sheet-content';
@@ -58,6 +67,7 @@ import { usePlanWalk } from '@/hooks/use-plan-walk';
 import { SessionsSheetContent } from '@/components/sessions/sessions-sheet-content';
 import { PermissionGate } from '@/components/shared/permission-gate';
 import { StatCard } from '@/components/shared/stat-card';
+import { BottomSheetGrabber, BOTTOM_SHEET_GRABBER_HEIGHT } from '@/components/ui/bottom-sheet-grabber';
 import { DevSlider } from '@/components/ui/dev-slider';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { RouteColourPicker } from '@/components/ui/route-colour-picker';
@@ -2062,6 +2072,12 @@ export default function MapScreen() {
   // it drives JS-only clustering (no server request).
   const exploreBoundsDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sheetRef = useRef<BottomSheet>(null);
+  const renderSheetHandle = useCallback(
+    (props: ComponentProps<typeof BottomSheetGrabber>) => (
+      <BottomSheetGrabber {...props} />
+    ),
+    [],
+  );
 
   // Tracks which sheet was open before navigating to a walk review so we can
   // restore it when the transparentModal is dismissed.
@@ -2931,8 +2947,13 @@ export default function MapScreen() {
         enableDynamicSizing={false}
         enablePanDownToClose
         enableContentPanningGesture={activeSheet !== 'explore' && activeSheet !== 'queued-walk'}
-        backgroundStyle={{ backgroundColor: 'transparent' }}
-        handleIndicatorStyle={{ backgroundColor: colors.textMuted }}
+        handleComponent={renderSheetHandle}
+        handleHeight={BOTTOM_SHEET_GRABBER_HEIGHT}
+        backgroundStyle={{
+          backgroundColor: colors.background,
+          borderTopLeftRadius: Radius.lg,
+          borderTopRightRadius: Radius.lg,
+        }}
         onChange={(index) => {
           setSheetSnapIndex(index);
           if (index === -1) {
@@ -3107,53 +3128,18 @@ export default function MapScreen() {
             onClearGroup={() => setExploreGroupedRoutes(null)}
           />
         )}
-        {activeSheet === 'profile' && (
-          <ProfileSheetContent
-            colors={colors}
-            insets={insets}
-            allowHistoryDuringRecording={flags.allowHistoryDuringRecording}
-            onToggleAllowHistoryDuringRecording={(v) => setFlag('allowHistoryDuringRecording', v)}
-            gpsAccuracyMultiplier={flags.gpsAccuracyMultiplier}
-            onGpsAccuracyMultiplierChange={(v) => setFlag('gpsAccuracyMultiplier', v)}
-            forcePedometerSteps={flags.forcePedometerSteps}
-            onToggleForcePedometerSteps={(v) => setFlag('forcePedometerSteps', v)}
-            startProximityThresholdM={flags.startProximityThresholdM}
-            onStartProximityThresholdMChange={(v) => setFlag('startProximityThresholdM', v)}
-            hapticOffRouteEnabled={flags.hapticOffRouteEnabled}
-            onToggleHapticOffRouteEnabled={(v) => setFlag('hapticOffRouteEnabled', v)}
-            hapticOffRouteStartM={flags.hapticOffRouteStartM}
-            onHapticOffRouteStartMChange={(v) => setFlag('hapticOffRouteStartM', v)}
-            hapticOffRouteMaxM={flags.hapticOffRouteMaxM}
-            onHapticOffRouteMaxMChange={(v) => setFlag('hapticOffRouteMaxM', v)}
-            hapticMinImpact={flags.hapticMinImpact}
-            onHapticMinImpactChange={(v) => setFlag('hapticMinImpact', v)}
-            hapticMaxImpact={flags.hapticMaxImpact}
-            onHapticMaxImpactChange={(v) => setFlag('hapticMaxImpact', v)}
-            hapticSlowIntervalMs={flags.hapticSlowIntervalMs}
-            onHapticSlowIntervalMsChange={(v) => setFlag('hapticSlowIntervalMs', v)}
-            hapticFastIntervalMs={flags.hapticFastIntervalMs}
-            onHapticFastIntervalMsChange={(v) => setFlag('hapticFastIntervalMs', v)}
-            hapticTestEnabled={flags.hapticTestEnabled}
-            onToggleHapticTestEnabled={(v) => setFlag('hapticTestEnabled', v)}
-            hapticTestDistanceM={flags.hapticTestDistanceM}
-            onHapticTestDistanceMChange={(v) => setFlag('hapticTestDistanceM', v)}
-            exploreDirectDetail={flags.exploreDirectDetail}
-            onToggleExploreDirectDetail={(v) => setFlag('exploreDirectDetail', v)}
-            flags={flags}
-            mapFeatures={mapFeatures}
-            onSetMapFeature={(key, value) => void setMapFeature(key, value)}
-            cam3dMinZoom={cam3dMinZoom}
-            onCam3dMinZoomChange={setCam3dMinZoom}
-            cam3dMaxZoom={cam3dMaxZoom}
-            onCam3dMaxZoomChange={setCam3dMaxZoom}
-            cam3dMinPitch={cam3dMinPitch}
-            onCam3dMinPitchChange={setCam3dMinPitch}
-            cam3dMaxPitch={cam3dMaxPitch}
-            onCam3dMaxPitchChange={setCam3dMaxPitch}
-            terrainExaggeration={terrainExaggeration}
-            onTerrainExaggerationChange={setTerrainExaggeration}
-          />
-        )}
+        <View
+          pointerEvents={activeSheet === 'profile' ? 'auto' : 'none'}
+          style={{
+            flex: activeSheet === 'profile' ? 1 : 0,
+            height: activeSheet === 'profile' ? undefined : 0,
+            overflow: 'hidden',
+            opacity: activeSheet === 'profile' ? 1 : 0,
+            backgroundColor: colors.background,
+          }}
+        >
+          <OverviewDashboard embedded />
+        </View>
       </BottomSheet>
 
       {/* Map button strip — top-right, rendered after BottomSheet so zIndex

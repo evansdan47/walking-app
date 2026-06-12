@@ -156,3 +156,74 @@ export const badgeCriteriaTypeValidator = v.union(
   v.literal('joined_beta'),
   v.literal('manual'),
 );
+
+export const badgeTierValidator = v.union(
+  v.literal('bronze'),
+  v.literal('silver'),
+  v.literal('gold'),
+  v.literal('platinum'),
+);
+
+export const badgeRuleTypeValidator = v.union(
+  v.literal('walk_count'),
+  v.literal('total_distance'),
+  v.literal('single_walk_distance'),
+  v.literal('total_elevation_gain'),
+  v.literal('planned_route_count'),
+  v.literal('goal_created'),
+  v.literal('has_avatar'),
+  v.literal('preferences_set'),
+  v.literal('joined_beta'),
+  v.literal('walk_on_weekend'),
+  v.literal('badge_unlocked'),
+  v.literal('consecutive_walk_days'),
+  v.literal('weekend_both_days'),
+  v.literal('active_weeks_streak'),
+  v.literal('active_months_streak'),
+  v.literal('total_moving_time'),
+  v.literal('goals_completed'),
+  v.literal('walk_photos_max_on_walk'),
+  v.literal('walk_photos_total'),
+  v.literal('walk_started_before_hour'),
+  v.literal('walk_started_after_hour'),
+  v.literal('single_walk_elevation_gain'),
+  v.literal('single_walk_elevation_total'),
+  v.literal('single_walk_moving_time'),
+  v.literal('single_walk_duration'),
+  v.literal('clean_walk_count'),
+  v.literal('unique_walk_areas'),
+  v.literal('unique_walk_regions'),
+  v.literal('walk_has_tag'),
+  v.literal('follow_sessions'),
+  v.literal('planned_route_short'),
+  v.literal('planned_route_long'),
+  v.literal('planned_route_circular'),
+  v.literal('planned_route_published'),
+  v.literal('planned_route_poi_total'),
+  v.literal('manual'),
+);
+
+export const badgePeriodValidator = v.union(
+  v.literal('lifetime'),
+  v.literal('daily'),
+  v.literal('weekly'),
+  v.literal('monthly'),
+  v.literal('yearly'),
+);
+
+export const badgeSourceTypeValidator = v.union(
+  v.literal('walk'),
+  v.literal('follow_session'),
+  v.literal('route'),
+  v.literal('goal'),
+  v.literal('manual'),
+  v.literal('system'),
+);
+
+export const badgeNewShineEffectValidator = v.union(
+  v.literal('soft_sweep'),
+  v.literal('sharp_sweep'),
+  v.literal('glossy_sweep'),
+  v.literal('multi_bands'),
+  v.literal('bright_flash'),
+);

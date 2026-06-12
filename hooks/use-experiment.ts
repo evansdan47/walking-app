@@ -1,7 +1,8 @@
 import { api } from '@/convex/_generated/api';
-import { useMutation, useQuery } from 'convex/react';
+import { useMutation } from 'convex/react';
 import { useCallback } from 'react';
 
+import { useAppQuery } from '@/hooks/use-app-query';
 import {
   EXPERIMENT_EVENTS,
   WALK_TAGGING_EXPERIMENT_KEY,
@@ -17,7 +18,7 @@ type RecordEventOptions = {
 };
 
 export function useExperiment(experimentKey: string) {
-  const state = useQuery(api.experiments.get, { key: experimentKey });
+  const state = useAppQuery(api.experiments.get, { key: experimentKey });
   const assignMutation = useMutation(api.experiments.assign);
   const recordEventMutation = useMutation(api.experiments.recordEvent);
 

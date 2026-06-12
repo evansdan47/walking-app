@@ -42,7 +42,11 @@ const TABS: TabDef[] = [
 ];
 
 export default function WalkSummaryScreen() {
-  const { walkId } = useLocalSearchParams<{ walkId: string }>();
+  const { walkId, promptTagging } = useLocalSearchParams<{
+    walkId: string;
+    /** Set when navigating immediately after finishing a walk — not from sessions/history. */
+    promptTagging?: string;
+  }>();
   const router = useRouter();
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
@@ -92,10 +96,15 @@ export default function WalkSummaryScreen() {
   }, [route, photos, onPhotoTap]);
 
   useEffect(() => {
-    if (walk?.status === 'completed' && experiment.enabled && !experiment.isLoading) {
+    if (
+      promptTagging === '1' &&
+      walk?.status === 'completed' &&
+      experiment.enabled &&
+      !experiment.isLoading
+    ) {
       setTaggingVisible(true);
     }
-  }, [walk?.status, experiment.enabled, experiment.isLoading]);
+  }, [promptTagging, walk?.status, experiment.enabled, experiment.isLoading]);
 
   // Camera padding for the local ReviewRouteLayer — above sheet when open, minimal when closed.
   const cameraPaddingBottom = sheetOpen ? screenHeight * 0.75 + 20 : insets.bottom + 60;

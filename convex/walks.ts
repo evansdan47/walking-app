@@ -1,6 +1,7 @@
 import { v } from 'convex/values';
 import type { Id } from './_generated/dataModel';
 import { mutation, type MutationCtx, query, type QueryCtx } from './_generated/server';
+import { evaluateBadgesForUser } from './badgeEngine/evaluate';
 
 const statsValidator = v.optional(
   v.object({
@@ -63,7 +64,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const user = await getAuthUser(ctx);
-    return await ctx.db.insert('walks', {
+    const walkId = await ctx.db.insert('walks', {
       userId: user._id,
       status: args.status,
       startedAt: args.startedAt,
@@ -74,6 +75,16 @@ export const create = mutation({
       ...(args.isLive !== undefined ? { isLive: args.isLive } : {}),
       ...(args.plannedRouteId !== undefined ? { plannedRouteId: args.plannedRouteId } : {}),
     });
+
+    if (args.status === 'completed') {
+      await evaluateBadgesForUser(ctx, {
+        userId: user._id,
+        eventType: 'walk_completed',
+        sourceId: walkId,
+      });
+    }
+
+    return walkId;
   },
 });
 
@@ -100,6 +111,34 @@ export const complete = mutation({
       isLive: false,
       ...(args.stats !== undefined ? { stats: args.stats } : {}),
       ...(args.plannedRouteId !== undefined ? { plannedRouteId: args.plannedRouteId } : {}),
+    });
+
+    await evaluateBadgesForUser(ctx, {
+      userId: user._id,
+      eventType: 'walk_completed',
+      sourceId: args.walkId,
+    });
+  },
+});
+
+/**
+ * Called after mobile/web sync finishes uploading track points and photos.
+ * Evaluates walk-related badges using the full historic walk catalogue.
+ */
+export const finalizeSync = mutation({
+  args: { walkId: v.id('walks') },
+  handler: async (ctx, { walkId }) => {
+    const user = await getAuthUser(ctx);
+    const walk = await ctx.db.get(walkId);
+    if (!walk || walk.userId.toString() !== user._id.toString()) {
+      throw new Error('Forbidden');
+    }
+    if (walk.status !== 'completed') throw new Error('Walk is not completed');
+
+    return await evaluateBadgesForUser(ctx, {
+      userId: user._id,
+      eventType: 'walk_synced',
+      sourceId: walkId,
     });
   },
 });

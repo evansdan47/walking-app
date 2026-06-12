@@ -16,31 +16,35 @@ export const adminSeedBadgeDefinitions = mutation({
     let inserted = 0;
     let updated = 0;
 
+    const now = Date.now();
+
     for (const seed of BADGE_DEFINITION_SEEDS) {
-      const existing = await ctx.db
-        .query('badgeDefinitions')
-        .withIndex('by_slug', (q) => q.eq('slug', seed.slug))
-        .unique();
+      const existing =
+        (await ctx.db
+          .query('badgeDefinitions')
+          .withIndex('by_key', (q) => q.eq('key', seed.key))
+          .unique()) ??
+        (await ctx.db
+          .query('badgeDefinitions')
+          .withIndex('by_slug', (q) => q.eq('slug', seed.slug))
+          .unique());
+
+      const row = {
+        ...seed,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
 
       if (existing) {
-        await ctx.db.patch(existing._id, {
-          category: seed.category,
-          label: seed.label,
-          description: seed.description,
-          sortOrder: seed.sortOrder,
-          iconKey: seed.iconKey,
-          criteriaType: seed.criteriaType,
-          criteriaThreshold: seed.criteriaThreshold,
-          isActive: seed.isActive,
-        });
+        await ctx.db.patch(existing._id, row);
         updated++;
       } else {
-        await ctx.db.insert('badgeDefinitions', seed);
+        await ctx.db.insert('badgeDefinitions', row);
         inserted++;
       }
     }
 
-    return { inserted, updated };
+    return { inserted, updated, total: BADGE_DEFINITION_SEEDS.length };
   },
 });
 

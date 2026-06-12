@@ -4,9 +4,12 @@ import Link from 'next/link';
 /** Minimal full-page shell for Account / Help (opened in a new tab from the menu). */
 export function AccountPageShell({
   title,
+  showMapLink = true,
   children,
 }: {
   title: string;
+  /** When false, header shows only the logo and title (e.g. badges popup window). */
+  showMapLink?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -17,12 +20,14 @@ export function AccountPageShell({
             <Image src="/Logo.png" alt="Rambleio" height={28} width={28} className="h-7 w-7" />
             <span className="text-sm font-semibold text-gray-900">{title}</span>
           </Link>
-          <Link
-            href="/map"
-            className="text-sm font-medium text-gray-600 hover:text-brand transition-colors"
-          >
-            Open map
-          </Link>
+          {showMapLink && (
+            <Link
+              href="/map"
+              className="text-sm font-medium text-gray-600 hover:text-brand transition-colors"
+            >
+              Open map
+            </Link>
+          )}
         </div>
       </header>
       <main className="flex-1 px-4 py-8 max-w-3xl mx-auto w-full">{children}</main>

@@ -1,7 +1,7 @@
 export type AccountNavItem = {
   href: string;
   label: string;
-  icon: 'overview' | 'profile' | 'subscription' | 'preferences' | 'goals' | 'badges' | 'sharing' | 'account' | 'help';
+  icon: 'overview' | 'profile' | 'subscription' | 'preferences' | 'goals' | 'badges' | 'sharing' | 'account' | 'help' | 'admin';
   section?: 'main' | 'footer';
 };
 

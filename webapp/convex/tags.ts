@@ -3,6 +3,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internalMutation, mutation, query } from './_generated/server';
+import { evaluateBadgesForUser } from './badgeEngine/evaluate';
 import { getOptionalUser, requireAdmin, requireUser } from './authHelpers';
 import {
   computeConfidenceScore,
@@ -601,6 +602,12 @@ export const submitWalkTags = mutation({
         tagCount: args.tagIds.length,
         plannedRouteId: routeId?.toString(),
       },
+    });
+
+    await evaluateBadgesForUser(ctx, {
+      userId: user._id,
+      eventType: 'tag_submitted',
+      sourceId: args.walkId,
     });
 
     return { walkId: args.walkId, tagCount: args.tagIds.length, plannedRouteId: routeId };

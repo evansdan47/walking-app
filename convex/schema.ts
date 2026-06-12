@@ -8,9 +8,14 @@ import {
   tagKindValidator,
   taggingExperimentVariantValidator,
 } from "./tagValidators";
+import { badgeRuleConfigValidator } from "./badgeRuleValidators";
 import {
   badgeCategoryValidator,
   badgeCriteriaTypeValidator,
+  badgeRuleTypeValidator,
+  badgeNewShineEffectValidator,
+  badgeSourceTypeValidator,
+  badgeTierValidator,
   goalCategoryValidator,
   goalPeriodValidator,
   userGoalStatusValidator,
@@ -61,6 +66,8 @@ export default defineSchema({
     lastMobilePlatform: v.optional(v.union(v.literal("ios"), v.literal("android"))),
     /** Web app version string from the most recent web session sync. */
     lastWebAppVersion: v.optional(v.string()),
+    /** True when the user has a profile image (Clerk avatar or OAuth picture). */
+    hasAvatar: v.optional(v.boolean()),
   }).index("by_tokenIdentifier", ["tokenIdentifier"]),
 
   // ------------------------------------------------------------------
@@ -96,34 +103,102 @@ export default defineSchema({
     .index("by_userId_and_status", ["userId", "status"])
     .index("by_userId_and_windowEnd", ["userId", "windowEnd"]),
 
-  /** Data-driven badge catalogue (seeded from badgeDefinitionsSeed.ts). */
+  /** Admin-managed badge categories (@see docs/badgeSystemRoadmap.md). */
+  badgeCategories: defineTable({
+    key: v.string(),
+    name: v.string(),
+    description: v.optional(v.string()),
+    color: v.string(),
+    icon: v.string(),
+    displayOrder: v.number(),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_key", ["key"])
+    .index("by_displayOrder", ["displayOrder"]),
+
+  /**
+   * Data-driven badge catalogue (seeded from badgeDefinitionsSeed.ts).
+   * v1 fields (slug, category, label, criteriaType) kept during widen-migrate-narrow.
+   */
   badgeDefinitions: defineTable({
+    /** @deprecated Prefer `key` — kept as alias during migration. */
     slug: v.string(),
+    /** @deprecated Prefer `categoryKey` — kept during migration. */
     category: badgeCategoryValidator,
+    /** @deprecated Prefer `name` — kept during migration. */
     label: v.string(),
     description: v.string(),
+    /** @deprecated Prefer `displayOrder` — kept during migration. */
     sortOrder: v.number(),
-    /** UI icon key (web/mobile map to assets). */
+    /** @deprecated Prefer `icon` — kept during migration. */
     iconKey: v.optional(v.string()),
+    /** @deprecated Prefer `ruleType` + `ruleConfig` — kept during migration. */
     criteriaType: badgeCriteriaTypeValidator,
     criteriaThreshold: v.optional(v.number()),
     isActive: v.boolean(),
+    // v2 fields
+    key: v.optional(v.string()),
+    categoryKey: v.optional(v.string()),
+    name: v.optional(v.string()),
+    lockedDescription: v.optional(v.string()),
+    icon: v.optional(v.string()),
+    color: v.optional(v.string()),
+    tier: v.optional(badgeTierValidator),
+    ruleType: v.optional(badgeRuleTypeValidator),
+    ruleConfig: v.optional(badgeRuleConfigValidator),
+    points: v.optional(v.number()),
+    displayOrder: v.optional(v.number()),
+    isHiddenUntilUnlocked: v.optional(v.boolean()),
+    isRepeatable: v.optional(v.boolean()),
+    startsAt: v.optional(v.number()),
+    endsAt: v.optional(v.number()),
+    createdAt: v.optional(v.number()),
+    updatedAt: v.optional(v.number()),
   })
     .index("by_slug", ["slug"])
     .index("by_category_and_sortOrder", ["category", "sortOrder"])
-    .index("by_isActive", ["isActive"]),
+    .index("by_isActive", ["isActive"])
+    .index("by_key", ["key"])
+    .index("by_categoryKey_and_displayOrder", ["categoryKey", "displayOrder"])
+    .index("by_ruleType", ["ruleType"]),
 
   /** Badges unlocked by a user. */
   userBadges: defineTable({
     userId: v.id("users"),
     badgeId: v.id("badgeDefinitions"),
     unlockedAt: v.number(),
+    /** @deprecated Prefer typed source fields below. */
     metadata: v.optional(v.any()),
+    badgeKey: v.optional(v.string()),
+    progressAtUnlock: v.optional(v.number()),
+    sourceType: v.optional(badgeSourceTypeValidator),
+    sourceId: v.optional(v.string()),
+    seenAt: v.optional(v.number()),
   })
     .index("by_userId", ["userId"])
     .index("by_userId_and_badgeId", ["userId", "badgeId"])
     .index("by_userId_and_unlockedAt", ["userId", "unlockedAt"])
     .index("by_badgeId", ["badgeId"]),
+
+  /** Singleton UI preferences for the badge gallery (key is always "global"). */
+  badgeUiSettings: defineTable({
+    key: v.literal('global'),
+    newBadgeShineEffect: badgeNewShineEffectValidator,
+    updatedAt: v.number(),
+    updatedByUserId: v.optional(v.id('users')),
+  }).index('by_key', ['key']),
+
+  /** Cached progress toward locked badges — avoids full re-scan on gallery load. */
+  userBadgeProgress: defineTable({
+    userId: v.id("users"),
+    badgeKey: v.string(),
+    currentValue: v.number(),
+    targetValue: v.number(),
+    progressPercent: v.number(),
+    lastEvaluatedAt: v.number(),
+  }).index("by_userId_and_badgeKey", ["userId", "badgeKey"]),
 
   /**
    * A single walk session — covers recording, review and replay source.

@@ -1,9 +1,10 @@
 import * as SecureStore from 'expo-secure-store';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { useMutation, useQuery } from 'convex/react';
+import { useMutation } from 'convex/react';
 
 import { api } from '@/convex/_generated/api';
+import { useAppQuery } from '@/hooks/use-app-query';
 
 const CACHE_KEY = 'map_features_v1';
 
@@ -36,7 +37,7 @@ export function useMapFeatures() {
   const [loaded, setLoaded] = useState(false);
   const initialLoadDone = useRef(false);
 
-  const convexFlags = useQuery(api.users.getMapFeatureFlags);
+  const convexFlags = useAppQuery(api.users.getMapFeatureFlags);
   const setFlagsMutation = useMutation(api.users.setMapFeatureFlags);
 
   // Load cached flags from SecureStore on mount (offline-first)

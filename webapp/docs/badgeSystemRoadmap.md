@@ -3,7 +3,7 @@
 **Parent:** [UserMenuRoadmap.md](UserMenuRoadmap.md) Phase 7  
 **Requirements:** [usermenu.md](usermenu.md) (10×10 badge catalogue), user badge design spec (March 2026)  
 **Visual reference:** Rambleio Badges mockup — hex tiles, category colours, Bronze → Platinum tiers  
-**Status:** Planned — schema partially deployed; engine, gallery, and admin console not built  
+**Status:** Phase 7 complete (7a–7e) — full catalogue, advanced rules, backfill, and admin polish  
 **Last updated:** June 2026
 
 ---
@@ -49,7 +49,7 @@ Adding “Walk 500 km total” or “Climb Snowdon” should be **admin data ent
 - Badge evaluation engine
 - `userBadgeProgress` table
 - `badgeCategories` table (categories embedded in enum today)
-- User-facing gallery (account menu still uses `MOCK_BADGES`)
+- User-facing gallery — **shipped (7b)**
 - Admin UI (`/admin/badges`)
 - Event hooks on walk complete / route plan / etc.
 - Progress bars toward next badge
@@ -365,13 +365,13 @@ sequenceDiagram
 
 ### Gallery features (v1)
 
-- [ ] All badges grid, grouped by category (collapsible sections)  
-- [ ] Filters: **All** / **Earned** / **Locked** / **In progress**  
-- [ ] Category chips (mockup colours)  
-- [ ] Recently unlocked strip (sort `unlockedAt` desc)  
-- [ ] Hidden badges (`isHiddenUntilUnlocked`) omitted until earned  
-- [ ] Badge detail popover: description, tier, earned date, progress bar  
-- [ ] “Mark as seen” clears `seenAt` / overview dot  
+- [x] All badges grid, grouped by category (collapsible sections)  
+- [x] Filters: **All** / **Earned** / **Locked** / **In progress**  
+- [x] Category chips (mockup colours)  
+- [x] Recently unlocked strip (sort `unlockedAt` desc)  
+- [x] Hidden badges (`isHiddenUntilUnlocked`) omitted until earned  
+- [x] Badge detail popover: description, tier, earned date, progress bar  
+- [x] “Mark as seen” sets `seenAt` / clears overview dot  
 
 ### Queries
 
@@ -532,29 +532,31 @@ Keep `badgeDefinitionsSeed.ts` for bootstrap, but **admin console is source of t
 
 ---
 
-### Phase 7d — Progress & polish (3–5 days)
+### Phase 7d — Progress & polish (3–5 days) ✅
 
 | Deliverable | Detail |
 |-------------|--------|
-| `userBadgeProgress` table | In-progress bars |
-| Additional hooks | route plan, goal create, avatar |
-| `markBadgeSeen` | New badge indicator |
-| Expand seeds | Waves 7b–7c (~70 badges) |
-| Mobile parity plan | Document API reuse |
+| `userBadgeProgress` table | In-progress bars (cached on eval) |
+| Additional hooks | `planned_routes.save`, `userGoals.create`, `users.updatePreferences`, `users.recordAvatarUpdated`, `users.upsertCurrentUser` (OAuth picture) |
+| `markBadgeSeen` | New badge indicator (gallery popover) |
+| Expand seeds | 100-badge MVP catalogue seeded |
+| Mobile parity plan | §14 — reuse gallery queries; server-side eval on sync |
 
 **Exit:** Profile Ready unlocks on avatar; Goal Setter on goal create; progress bars on locked badges.
 
 ---
 
-### Phase 7e — Full catalogue & advanced rules (1–2 weeks)
+### Phase 7e — Full catalogue & advanced rules (1–2 weeks) ✅
 
 | Deliverable | Detail |
 |-------------|--------|
-| Remaining rule types | follow, photos, pace, exploration |
-| 100-badge seed | All categories populated |
-| Community badges | `isActive: false` until sharing ships |
-| Seasonal badges | `startsAt` / `endsAt` support |
-| Admin duplicate + reorder | |
+| Remaining rule types | 24 new evaluators: streaks, moving time, photos, tags, exploration areas, follow sessions, route POI/circular/publish, elevation per-walk, clean GPS |
+| 100-badge seed | All non-community badges use real rules (87 active auto + 10 community inactive + 3 inactive) |
+| Community badges | `isActive: false` until Phase 8 sharing |
+| Seasonal badges | `startsAt` / `endsAt` on schema + admin editor |
+| Admin duplicate + reorder | `duplicateBadge` + `reorderBadges` |
+| Historic backfill | `badges.recalculateForCurrentUser` + gallery button |
+| Mobile sync hook | `walks.finalizeSync` after upload completes |
 
 **Exit:** Mockup parity; community badges visible but disabled until Phase 8.
 
@@ -599,11 +601,26 @@ Example rows (abbreviated):
 
 ## 14. Mobile
 
-Reuse Convex APIs:
+Reuse Convex APIs (no duplicate rule logic on device):
 
-- `badges.getGalleryForCurrentUser`  
-- `badges.listRecentUnlocked`  
-- Evaluation runs server-side on sync — mobile only displays results  
+| API | Use |
+|-----|-----|
+| `badges.getGalleryForCurrentUser` | Full gallery with status + progress |
+| `badges.listRecentUnlocked` | Overview strip |
+| `badges.markBadgeSeen` | Clear "new" dot after viewing |
+| `users.recordAvatarUpdated` | After Clerk `setProfileImage` on mobile |
+| `users.upsertCurrentUser` | Session sync; sets `hasAvatar` from JWT `pictureUrl` |
+| `badges.recalculateForCurrentUser` | Backfill badges from historic walks |
+| `walks.finalizeSync` | After mobile upload completes |
+| `followSessions.start` / `complete` | Following-route badges |
+
+Evaluation runs **server-side** on qualifying events — mobile only displays results:
+
+- `walks.complete` / completed `walks.create` → distance, consistency, elevation, etc.
+- `planned_routes.save` → Route Rookie, route-planning badges
+- `userGoals.create` → Goal Setter
+- `users.updatePreferences` → Preference Setter
+- `users.recordAvatarUpdated` / OAuth login → Profile Ready
 
 Native hex grid in profile / account stack ([UserMenuRoadmap M3](UserMenuRoadmap.md)).
 
@@ -629,7 +646,7 @@ Native hex grid in profile / account stack ([UserMenuRoadmap M3](UserMenuRoadmap
 | Expensive eval on every read | Event-driven + `userBadgeProgress` cache |
 | Rules unlock everyone | Admin preview + staging `isActive: false` default for new badges |
 | Community badges without features | Seed inactive; document in admin |
-| Clerk avatar not in Convex | `has_avatar` checks via client event or periodic profile sync flag |
+| Clerk avatar not in Convex | `users.hasAvatar` + `recordAvatarUpdated` after Clerk upload; OAuth `pictureUrl` on login |
 
 ---
 

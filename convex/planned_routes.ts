@@ -1,4 +1,5 @@
 import { v } from 'convex/values';
+import { evaluateBadgesForUser } from './badgeEngine/evaluate';
 import { mutation, query } from './_generated/server';
 
 const pointValidator = v.object({
@@ -49,7 +50,7 @@ export const save = mutation({
       .unique();
     if (!user) throw new Error('User not found');
 
-    return await ctx.db.insert('plannedRoutes', {
+    const routeId = await ctx.db.insert('plannedRoutes', {
       userId: user._id,
       authorId: user._id,
       visibility: args.visibility ?? 'private',
@@ -59,6 +60,14 @@ export const save = mutation({
       ...(args.description?.trim() ? { description: args.description.trim() } : {}),
       ...(args.stats !== undefined ? { stats: args.stats } : {}),
     });
+
+    await evaluateBadgesForUser(ctx, {
+      userId: user._id,
+      eventType: 'route_planned',
+      sourceId: routeId,
+    });
+
+    return routeId;
   },
 });
 

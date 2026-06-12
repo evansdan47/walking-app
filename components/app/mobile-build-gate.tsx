@@ -3,7 +3,7 @@ import { Colors, Radius, Spacing, Typography } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useUserSessionSync } from '@/hooks/use-user-session-sync';
 import { getMobileClientInfo, openMobileStore } from '@/lib/mobile-client-info';
-import { useQuery } from 'convex/react';
+import { useAppQuery } from '@/hooks/use-app-query';
 import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -31,7 +31,7 @@ export function MobileBuildGate({ children }: MobileBuildGateProps) {
   const scheme = (useColorScheme() ?? 'light') as 'light' | 'dark';
   const colors = Colors[scheme];
   const clientInfo = useMemo(() => getMobileClientInfo(), []);
-  const buildCheck = useQuery(api.appRelease.checkMobileBuild, {
+  const buildCheck = useAppQuery(api.appRelease.checkMobileBuild, {
     platform: clientInfo.platform,
     build: clientInfo.build,
   });

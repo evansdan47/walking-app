@@ -46,7 +46,7 @@ export const ACCOUNT_MENU_VIEW_COPY: Record<
   },
   badges: {
     title: 'Badges',
-    description: 'Your achievement badges and progress — coming soon.',
+    description: 'Your achievement badges and progress.',
   },
   sharing: {
     title: 'Sharing',

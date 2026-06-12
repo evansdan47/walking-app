@@ -228,7 +228,10 @@ export default function WalkFollowScreen() {
   // ── Handle state transitions ───────────────────────────────────────────────
   useEffect(() => {
     if (state.phase === 'completed') {
-      router.replace({ pathname: '/walk-summary', params: { walkId: state.walkId } });
+      router.replace({
+        pathname: '/walk-summary',
+        params: { walkId: state.walkId, promptTagging: '1' },
+      });
     }
   }, [state.phase, router]);
 

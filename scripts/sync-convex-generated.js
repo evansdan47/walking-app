@@ -31,14 +31,37 @@ function syncGenerated() {
   console.log(`[sync-convex] copied ${files.length} file(s) → webapp/convex/_generated/`);
 }
 
+function copyDirRecursive(srcDir, destDir) {
+  fs.mkdirSync(destDir, { recursive: true });
+  let count = 0;
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      count += copyDirRecursive(srcPath, destPath);
+    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+      fs.copyFileSync(srcPath, destPath);
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function syncSources() {
   fs.mkdirSync(DEST_ROOT, { recursive: true });
-  const entries = fs.readdirSync(SRC_ROOT, { withFileTypes: true });
-  const files = entries.filter(e => e.isFile() && e.name.endsWith('.ts'));
-  for (const file of files) {
-    fs.copyFileSync(path.join(SRC_ROOT, file.name), path.join(DEST_ROOT, file.name));
+  let count = 0;
+  for (const entry of fs.readdirSync(SRC_ROOT, { withFileTypes: true })) {
+    if (entry.name === '_generated') continue;
+    const srcPath = path.join(SRC_ROOT, entry.name);
+    const destPath = path.join(DEST_ROOT, entry.name);
+    if (entry.isDirectory()) {
+      count += copyDirRecursive(srcPath, destPath);
+    } else if (entry.isFile() && entry.name.endsWith('.ts')) {
+      fs.copyFileSync(srcPath, destPath);
+      count += 1;
+    }
   }
-  console.log(`[sync-convex] copied ${files.length} source file(s) → webapp/convex/`);
+  console.log(`[sync-convex] copied ${count} source file(s) → webapp/convex/`);
 }
 
 function syncAll() {
@@ -62,14 +85,16 @@ if (process.argv.includes('--watch')) {
     }
   });
 
-  fs.watch(SRC_ROOT, (eventType, filename) => {
-    if (filename && filename.endsWith('.ts') && !filename.startsWith('_generated')) {
-      try {
-        fs.copyFileSync(path.join(SRC_ROOT, filename), path.join(DEST_ROOT, filename));
-        console.log(`[sync-convex] updated ${filename}`);
-      } catch {
-        // file may have been deleted; ignore
-      }
+  fs.watch(SRC_ROOT, { recursive: true }, (eventType, filename) => {
+    if (!filename || !filename.endsWith('.ts') || filename.includes('_generated')) return;
+    const srcPath = path.join(SRC_ROOT, filename);
+    const destPath = path.join(DEST_ROOT, filename);
+    try {
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.copyFileSync(srcPath, destPath);
+      console.log(`[sync-convex] updated ${filename}`);
+    } catch {
+      // file may have been deleted; ignore
     }
   });
 }

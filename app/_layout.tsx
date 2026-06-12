@@ -48,6 +48,7 @@ import '@/lib/location/background-task';
 // The token is exposed to the JS bundle via the EXPO_PUBLIC_ prefix.
 Mapbox.setAccessToken(process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN ?? '');
 
+import { BadgeUnlockToastHost } from '@/components/badges/badge-unlock-toast';
 import { MobileBuildGate } from '@/components/app/mobile-build-gate';
 import { QueuedWalkProvider } from '@/contexts/queued-walk-context';
 import { ReviewRouteProvider } from '@/contexts/review-route-context';
@@ -114,6 +115,7 @@ export default function RootLayout() {
                 <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
                   <Stack>
                     <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                    <Stack.Screen name="account" options={{ headerShown: false }} />
                     <Stack.Screen name="(auth)" options={{ headerShown: false }} />
                     <Stack.Screen name="sso-callback" options={{ headerShown: false }} />
                     <Stack.Screen
@@ -140,6 +142,7 @@ export default function RootLayout() {
                     />
                   </Stack>
                 <StatusBar style="auto" />
+                <BadgeUnlockToastHost />
               </ThemeProvider>
               </ReviewRouteProvider>
             </QueuedWalkProvider>

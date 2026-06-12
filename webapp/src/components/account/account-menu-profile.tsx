@@ -23,6 +23,7 @@ export function AccountMenuProfile() {
   const { email } = useUserDisplay();
   const accountSummary = useQuery(api.users.getAccountSummary);
   const updateProfile = useMutation(api.users.updateProfile);
+  const recordAvatarUpdated = useMutation(api.users.recordAvatarUpdated);
 
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -53,6 +54,7 @@ export function AccountMenuProfile() {
     try {
       await user.setProfileImage({ file });
       await user.reload();
+      await recordAvatarUpdated({ hasAvatar: true });
     } catch (err) {
       setAvatarError(err instanceof Error ? err.message : 'Could not update avatar');
     } finally {

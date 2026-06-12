@@ -76,6 +76,12 @@
         }
       ],
       "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Rambleio to access your photos to set your profile picture."
+        }
+      ],
       "@clerk/expo",
       "expo-secure-store",
       "expo-sqlite"
